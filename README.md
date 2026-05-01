@@ -23,12 +23,12 @@ Arbiter is split into four seperated component crates to isolate scope.
 Handles all logical state, permissions, configurations, and signal observation. It provides data contracts but executes no instructions.
 * **Vigil**: Pluggable observation listeners for hotkeys and file monitoring.
 * **Atlas**: The Finite State Machine evaluation loop that maps triggers to sequences.
-* **Signet**: Secure configuration vault managing trusted paths and command whitelists.
+* **Signet**: Secure configuration vault managing trusted paths and command whitelists. Protected by Windows DPAPI.
 * **Filter**: In-memory path lock state that prevents infinite event observation loops.
 
 ### 2. arbiter-bridge
 A single-responsibility hardware and file execution layer. It processes incoming logical directives through a global queuing lock.
-* **Runner**: Background orchestration task that manages sequential action execution.
+* **Runner**: Background orchestration task that manages sequential action execution. Hardened with a 5s Hibernation Guard.
 * **Hardware Bridge**: Physical keyboard and mouse routing handler with coordinate bounds checks.
 * **Filesystem Bridge**: Secure file system IO manager handling localized file manipulation using `PathBuf` for cross-platform safety.
 * **Shell Bridge**: Hardened sub-process launching utility handling independent executions.
@@ -136,4 +136,5 @@ MIT License
 ## Future Plans
 
 - Conditional logic in the Decree sequence editor (branching steps based on analytical ward data).
-- Signet vault encryption (AES-GCM key derivation is stubbed; full passphrase protection is pending because of startup issues, would love to hear some ideas on how to handle this).
+- Integrated Telemetry: Moving from newline-delimited JSON to a more robust binary protocol for inter-process communication.
+- Enhanced Perception: Specialized analytical gates for deep-tissue file inspection (MIME, SHA-256).

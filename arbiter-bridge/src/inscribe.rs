@@ -1,48 +1,26 @@
-//! inscribe.rs — file-system write operations.
-//!
-//! Provides directory-jail-aware file operations. Every write is checked
-//! against the Conservatory (trusted paths from The Signet) before execution.
-//!
-//! Responsibilities:
-//!   - Move / copy / delete files within trusted directories.
-//!   - Walk source directories and enumerate matching files (walkdir).
-//!   - Return dry-run previews before any actual mutation.
-
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
 use globset::{Glob, GlobMatcher};
 
-// ── Directory Jail Guard ──────────────────────────────────────────────────────
 
-/// Error type for Inscribe operations.
 #[derive(Debug, thiserror::Error)]
 pub enum InscribeError {
-    /// The target path is not within any trusted directory (Conservatory violation).
     #[error("Inscribe: path '{0}' is not in a trusted directory")]
     NotTrusted(String),
-    /// The source path does not exist.
     #[error("Inscribe: source '{0}' does not exist")]
     SourceNotFound(String),
-    /// A standard I/O error occurred.
     #[error("Inscribe: I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Verify a path is under at least one trusted root before any write.
-/// Performs canonicalization to prevent path traversal (e.g. ..\..\).
 fn assert_trusted(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(), InscribeError> {
     let path = path.as_ref();
     
-    // Canonicalize the path to resolve symlinks and '..' components.
-    // If the path doesn't exist yet (common for destinations), canonicalize the parent.
     let canonical_path = if path.exists() {
         std::fs::canonicalize(path)?
     } else if let Some(parent) = path.parent() {
-        // If parent exists, canonicalize it and join the filename.
-        // If parent doesn't exist, we'll create it later, but for the check
-        // we keep going up until we find something that exists or hit the root.
         let mut curr = parent;
         while !curr.exists() && curr.parent().is_some() {
             curr = curr.parent().unwrap();
@@ -52,28 +30,24 @@ fn assert_trusted(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<()
         path.to_path_buf()
     };
 
-    let path_str = canonical_path.to_string_lossy();
-    
     if trusted_roots
         .iter()
         .any(|root| {
-            // Also canonicalize the trusted root for a fair comparison
             if let Ok(canon_root) = std::fs::canonicalize(root) {
-                path_str.starts_with(canon_root.to_string_lossy().as_ref())
+                canonical_path.starts_with(canon_root)
             } else {
-                path_str.starts_with(root.as_str())
+                canonical_path.to_string_lossy().starts_with(root)
             }
         })
     {
         return Ok(());
     }
+    let path_str = canonical_path.to_string_lossy().to_string();
     warn!(%path_str, "Inscribe: Conservatory rejected path (Traversal or Untrusted)");
-    Err(InscribeError::NotTrusted(path_str.to_string()))
+    Err(InscribeError::NotTrusted(path_str))
 }
 
-// ── File Operations ───────────────────────────────────────────────────────────
 
-/// Executes a closure with exponential backoff for Transient/Permission/Lock errors.
 async fn retry_with_backoff<F, Fut, T>(mut action: F) -> std::io::Result<T>
 where
     F: FnMut() -> Fut,
@@ -97,8 +71,6 @@ where
     }
 }
 
-/// Helper to ensure destination is a full file path.
-/// If `dst` is an existing directory or ends with a slash, appends the filename from `src`.
 fn ensure_file_path(src: &Path, dst: &Path) -> PathBuf {
     let mut final_dst = dst.to_path_buf();
     
@@ -113,8 +85,6 @@ fn ensure_file_path(src: &Path, dst: &Path) -> PathBuf {
     final_dst
 }
 
-/// Move `src` to `dst`, verifying `dst` parent is in a trusted directory.
-/// Returns the final destination path used.
 pub async fn move_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roots: &[String]) -> Result<PathBuf, InscribeError> {
     let src = src.as_ref();
     let dst_raw = dst.as_ref();
@@ -130,7 +100,6 @@ pub async fn move_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roo
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    // Attempt rename first (atomic on same volume), fall back to copy+delete
     retry_with_backoff(|| async {
         if tokio::fs::rename(src, &dst).await.is_err() {
             tokio::fs::copy(src, &dst).await?;
@@ -143,8 +112,6 @@ pub async fn move_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roo
     Ok(dst)
 }
 
-/// Copy `src` to `dst`, verifying `dst` parent is in a trusted directory.
-/// Returns the final destination path used and bytes copied.
 pub async fn copy_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(PathBuf, u64), InscribeError> {
     let src = src.as_ref();
     let dst_raw = dst.as_ref();
@@ -165,7 +132,6 @@ pub async fn copy_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roo
     Ok((dst, bytes))
 }
 
-/// Delete a file, verifying it is in a trusted directory.
 pub async fn delete_file(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(), InscribeError> {
     let path = path.as_ref();
     assert_trusted(path, trusted_roots)?;
@@ -179,21 +145,13 @@ pub async fn delete_file(path: impl AsRef<Path>, trusted_roots: &[String]) -> Re
     Ok(())
 }
 
-// ── Dry-Run Preview ───────────────────────────────────────────────────────────
 
-/// A preview of what would be affected by an Inscribe operation.
 #[derive(Debug)]
 pub struct DryRunReport {
-    /// Files that would be affected.
     pub affected: Vec<PathBuf>,
-    /// Any system-critical paths detected (e.g. paths under Windows, System32).
     pub warnings: Vec<String>,
 }
 
-/// Walk `root` and return all files matching `pattern` as a dry-run preview.
-///
-/// Does NOT perform any write. Used for Perception Simulation before a rule
-/// is activated (CONTEXT.md §4).
 pub fn dry_run_walk(root: &Path, pattern: &str) -> DryRunReport {
     let mut affected = Vec::new();
     let mut warnings = Vec::new();
@@ -282,10 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dry_run_warnings() {
-        // Just verify the regex warning triggers correctly without writing a real system file
         let sys_root = tempdir().unwrap();
-
-        // Windows warning check only checks if path contains 'system32' (case insensitive converted)
         let f2 = sys_root.path().join("SYSTEM32");
         std::fs::create_dir_all(&f2).unwrap();
         File::create(f2.join("dummy.sys")).unwrap();

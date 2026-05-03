@@ -12,8 +12,8 @@ fn main() {
         res.set("ProductName", "Project Arbiter");
         res.set("OriginalFilename", "arbiter.exe");
         res.set("LegalCopyright", "Copyright (c) 2026");
-        res.set("ProductVersion", "0.1.6.0");
-        res.set("FileVersion", "0.1.6.0");
+        res.set("ProductVersion", "0.2.0.0");
+        res.set("FileVersion", "0.2.0.0");
         res.set_manifest(r#"
         <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
           <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">

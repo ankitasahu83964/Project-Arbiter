@@ -1,37 +1,19 @@
-//! shell.rs — guarded shell command execution.
-//!
-//! Shell execution is the highest-privilege action Arbiter can perform.
-//! Every command must pass The Baton toggle before it runs — a per-target
-//! explicit user allowance stored in The Signet.
-//!
-//! Responsibilities:
-//!   - Execute a shell command given a Baton-allowed target path.
-//!   - Validate the target is explicitly permitted before spawning.
-//!   - Capture stdout/stderr and surface them as a structured result.
-//!   - Never run as elevated — if a privileged target is needed, surface
-//!     a clear error rather than escalating silently.
-
+// Shell execution is the highest-privilege action Arbiter can perform.
+// Every command must pass The Baton toggle before it runs, basically an explicit user allowance.
 use tracing::{info, warn};
 
-// ── Baton Guard ───────────────────────────────────────────────────────────────
 
-/// Error type for shell operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
-    /// The Baton toggle is not active for this target.
     #[error("The Baton: '{0}' is not allowed — grant it in the Signet first")]
     BatonNotGranted(String),
-    /// The process failed to spawn (missing binary, permissions, etc.).
     #[error("Shell: spawn failed: {0}")]
     SpawnFailed(String),
-    /// The process ran but exited with a non-zero status.
     #[error("Shell: exit {status} — {stderr}")]
     NonZeroExit { status: i32, stderr: String },
 }
 
-// ── Execution ─────────────────────────────────────────────────────────────────
 
-/// The output of a successful shell command.
 #[derive(Debug)]
 pub struct ShellOutput {
     pub stdout: String,
@@ -39,12 +21,6 @@ pub struct ShellOutput {
     pub exit_code: i32,
 }
 
-/// Execute `command` with `args` if `target_key` is Baton-allowed.
-///
-/// `target_key` is the canonical identifier checked against the Signet's
-/// `baton_allowed` set (typically the script path or command name).
-///
-/// `allowed_targets` — callers should pass `&config.baton_allowed`.
 pub async fn run(
     target_key: &str,
     command: &str,
@@ -84,10 +60,6 @@ pub async fn run(
     })
 }
 
-/// Spawn a command detached (fire-and-forget), verifying Baton first.
-///
-/// Unlike `run`, this does not wait for the process to finish and does
-/// not capture output. Suitable for launching background applications.
 pub async fn spawn_detached(
     target_key: &str,
     command: &str,

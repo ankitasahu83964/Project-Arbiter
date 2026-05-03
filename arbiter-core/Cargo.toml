@@ -26,7 +26,7 @@ regex      = { workspace = true }
 chrono     = { workspace = true }
 lazy_static= { workspace = true }
 dirs       = { workspace = true }
-bincode    = { workspace = true }
+rmp-serde  = { workspace = true }
 thiserror  = { workspace = true }
 windows    = { workspace = true, features = ["Win32_System_Registry", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_System_Memory"] }
 

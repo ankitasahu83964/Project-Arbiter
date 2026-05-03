@@ -27,6 +27,8 @@ dirs          = { workspace = true }
 image         = { workspace = true }
 windows       = { workspace = true }
 tokio-util    = { workspace = true }
+bytes         = { workspace = true }
+rmp-serde     = { workspace = true }
 futures       = { workspace = true }
 serde_json    = { workspace = true }
 chrono        = { workspace = true }

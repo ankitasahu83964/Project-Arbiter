@@ -1,17 +1,3 @@
-//! tray.rs — System tray lifecycle for the Arbiter background service.
-//!
-//! Uses `tao` for the OS event loop and `tray-icon` for tray presence.
-//! The tray is the *only* UI surface active at runtime.
-//!
-//! Tray menu items:
-//!   • "Pause Engine" / "Resume Engine"
-//!   • "Reset Engine"
-//!   • "Open Forge"
-//!   • "Quit Arbiter" (graceful shutdown)
-//!
-//! The engine continues running when the terminal window is closed.
-//! Quitting through the tray is the canonical shutdown path.
-
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -26,9 +12,6 @@ struct TrayIcons {
     executing: tray_icon::Icon,
 }
 
-// ── Tray App Events ───────────────────────────────────────────────────────────
-
-/// Events emitted from engine threads back into the tray event loop.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum TrayAppEvent {
@@ -89,11 +72,6 @@ fn is_process_elevated() -> bool {
     }
 }
 
-// ── Icon Builder ──────────────────────────────────────────────────────────────
-
-/// Build and return the system tray icon and menu item handles.
-///
-/// The returned `TrayIcon` must be kept alive for the icon to remain visible.
 fn build_tray() -> Result<(TrayIcon, MenuItem, TrayIcons), Box<dyn std::error::Error>> {
     // Embed the icon.ico from the data directory into the executable binary.
     // This ensures that the tray icon is *always* available, regardless of 
@@ -159,13 +137,6 @@ fn build_fallback_icon() -> Result<tray_icon::Icon, Box<dyn std::error::Error>> 
     Ok(tray_icon::Icon::from_rgba(px, 16, 16)?)
 }
 
-// ── Event Loop ────────────────────────────────────────────────────────────────
-
-/// Run the tray event loop — **blocks the calling thread** until quit.
-///
-/// Must be called on the main thread (Windows COM / Cocoa requirement).
-/// `on_quit` is a `FnOnce` consumed exactly once from whichever exit branch
-/// fires first (menu Quit or engine-initiated Shutdown).
 pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoopProxy<TrayAppEvent>) + 'static) {
     use tao::event::Event;
     use tray_icon::menu::MenuEvent;
@@ -186,7 +157,6 @@ pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoop
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
-        // ── Menu events ───────────────────────────────────────────────────────
         if let Ok(menu_event) = MenuEvent::receiver().try_recv() {
             let id = menu_event.id.0.as_str();
 
@@ -233,7 +203,6 @@ pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoop
             }
         }
 
-        // ── Engine → tray events ──────────────────────────────────────────────
         if let Event::UserEvent(app_event) = event {
             match app_event {
                 TrayAppEvent::StatusUpdate(msg) => {

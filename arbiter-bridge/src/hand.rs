@@ -1,26 +1,10 @@
-//! hand.rs — hardware execution bridge.
-//!
-//! Wraps `enigo` to provide a safe, coordinate-validated interface for
-//! mouse and keyboard actions. Every operation goes through Hand —
-//! no other crate touches raw input APIs.
-//!
-//! Responsibilities:
-//!   - Execute `Action` structs produced by The Atlas.
-//!   - Validate screen coordinates before moving the mouse (Hardware Guard).
-//!   - Queue semantics are enforced by the caller (The Queue); Hand
-//!     is intentionally stateless beyond `enigo` internals.
-//!
-//! Salvaged from: lithos-core/src/hardware.rs (full port, zero changes to logic).
-
 use enigo::{
     Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings,
 };
 use tracing::{debug, warn};
 use arbiter_core::decree::{Action, ActionType};
 
-// ── Hardware Bridge ───────────────────────────────────────────────────────────
 
-/// Hand: a stateful wrapper around `enigo` with coordinate validation.
 pub struct HardwareBridge {
     enigo: Enigo,
     screen_width: i32,
@@ -28,9 +12,6 @@ pub struct HardwareBridge {
 }
 
 impl HardwareBridge {
-    /// Initialise Hand for the given screen dimensions.
-    ///
-    /// Panics only if `enigo` itself fails to initialise — a hard system error.
     pub fn new(width: i32, height: i32) -> Self {
         let enigo = Enigo::new(&Settings::default())
             .expect("Hand: failed to initialise enigo hardware bridge");
@@ -42,12 +23,7 @@ impl HardwareBridge {
         }
     }
 
-    /// Execute a single resolved `Action`.
-    ///
-    /// Returns `Err` if the coordinate is out of bounds (Hardware Guard)
-    /// or if the underlying `enigo` call fails.
     pub async fn execute(&mut self, action: &Action) -> Result<(), String> {
-        // Move to target coordinate before acting (if provided)
         if let Some(ref pt) = action.point {
             self.validate_coordinate(pt.x, pt.y)?;
             self.enigo
@@ -104,7 +80,6 @@ impl HardwareBridge {
                     .map_err(|e| format!("Hand: scroll failed: {e:?}"))?;
             }
             ActionType::Navigate(keys) => {
-                // OS-native navigation: parse and press keys
                 let keys_lower = keys.to_lowercase();
                 let parts: Vec<&str> = keys_lower.split('+').collect();
                 let mut modifiers = Vec::new();
@@ -135,7 +110,6 @@ impl HardwareBridge {
                     }
                 }
 
-                // Execute key sequence
                 for &mod_key in &modifiers {
                     self.enigo
                         .key(mod_key, Direction::Press)
@@ -157,7 +131,6 @@ impl HardwareBridge {
                 debug!(%keys, "Hand: navigation executed");
             }
             ActionType::Wait(_) => {
-                // No-op here: waits are now handled asynchronously by the Runner
             }
             // File & Shell actions are handled directly by the Runner, not Hand.
             other => {
@@ -168,9 +141,7 @@ impl HardwareBridge {
         Ok(())
     }
 
-    // ── Hardware Guard ────────────────────────────────────────────────────────
-
-    /// Reject coordinates outside the declared monitor bounds.
+    
     fn validate_coordinate(&self, x: i32, y: i32) -> Result<(), String> {
         if x < 0 || x > self.screen_width || y < 0 || y > self.screen_height {
             let msg = format!(

@@ -1,5 +1,3 @@
-//! runner.rs — Orchestrates system actions (Hand, Shell, FS) under a global lock.
-
 use std::{collections::HashSet, sync::Arc};
 use regex::Regex;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -8,11 +6,10 @@ use tracing::{error, info, warn};
 use crate::{hand::HardwareBridge, inscribe, shell};
 use arbiter_core::{
     filter::ArbiterFilter,
-    decree::{ActionType, EnvContext, NodeKind, DecreeNode, RunEvent, DecreeId, NodeState},
+    decree::{Action, ActionType, EnvContext, NodeKind, DecreeNode, RunEvent, DecreeId, NodeState},
     protocol::LogEntry,
 };
 
-// ── Errors ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -25,10 +22,8 @@ pub enum RunnerError {
 }
 
 
-// ── Runner Commands ────────────────────────────────────────────────────────
 
 pub enum ExecCmd {
-    /// Request to run a sequence of nodes.
     Run {
         nodes: Vec<DecreeNode>,
         context: EnvContext,
@@ -43,37 +38,48 @@ pub enum ExecCmd {
     },
 }
 
-// ── Singleton Queue ──────────────────────────────────────────────────────────
 
 lazy_static::lazy_static! {
-    /// A global lock to ensure only one sequence can execute at a time.
     static ref QUEUE_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 }
 
-// ── Interpolation ────────────────────────────────────────────────────────────
 
 lazy_static::lazy_static! {
-    /// Regex to match ${env.KEY} patterns.
     static ref ENV_RE: Regex = Regex::new(r"\$\{env\.([^}]+)\}").unwrap();
 }
 
-fn interpolate_str(text: &str, ctx: &EnvContext) -> String {
-    // Replaces all occurrences of ${env.key} with values from the context.
-    // If a key is unknown or the Signet Guard blocks it, the token is left as-is.
+fn interpolate_str(text: &str, ctx: &EnvContext, sanitize: bool) -> String {
     ENV_RE.replace_all(text, |caps: &regex::Captures| {
         let key = &caps[1];
         if let Some(value) = ctx.resolve(key) {
-            value.to_string()
+            if sanitize {
+                sanitize_shell_arg(value)
+            } else {
+                value.to_string()
+            }
         } else {
             caps[0].to_string()
         }
     }).into_owned()
 }
 
+fn sanitize_shell_arg(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' | '|' | ';' | '<' | '>' | '^' | '%' | '!' | '"' => {
+                out.push(' '); // Replace with space or escape? Space is safer for simple names.
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn interpolate_action(action: &mut ActionType, ctx: &EnvContext) {
     match action {
         ActionType::Type(ref mut s) | ActionType::Navigate(ref mut s) => {
-            *s = interpolate_str(s, ctx);
+            *s = interpolate_str(s, ctx, false);
         }
         ActionType::InscribeMove {
             source,
@@ -83,19 +89,19 @@ fn interpolate_action(action: &mut ActionType, ctx: &EnvContext) {
             source,
             destination,
         } => {
-            let src_str = interpolate_str(&source.to_string_lossy(), ctx);
-            let dst_str = interpolate_str(&destination.to_string_lossy(), ctx);
+            let src_str = interpolate_str(&source.to_string_lossy(), ctx, false);
+            let dst_str = interpolate_str(&destination.to_string_lossy(), ctx, false);
             *source = src_str.into();
             *destination = dst_str.into();
         }
         ActionType::InscribeDelete { target } => {
-            let tgt_str = interpolate_str(&target.to_string_lossy(), ctx);
+            let tgt_str = interpolate_str(&target.to_string_lossy(), ctx, false);
             *target = tgt_str.into();
         }
         ActionType::Shell { command, args, .. } => {
-            *command = interpolate_str(command, ctx);
+            *command = interpolate_str(command, ctx, false);
             for arg in args.iter_mut() {
-                *arg = interpolate_str(arg, ctx);
+                *arg = interpolate_str(arg, ctx, true);
             }
         }
         ActionType::Click
@@ -106,12 +112,7 @@ fn interpolate_action(action: &mut ActionType, ctx: &EnvContext) {
     }
 }
 
-// ── Windows Idle Detection ───────────────────────────────────────────────────
 
-/// Returns the number of seconds since the user last touched a keyboard or mouse.
-///
-/// Uses `GetLastInputInfo` + `GetTickCount` from the Win32 API.
-/// Logged by the Runner before executing a sequence as an observability data point.
 #[cfg(windows)]
 fn get_idle_secs() -> u64 {
     use windows::Win32::{
@@ -138,11 +139,7 @@ fn get_idle_secs() -> u64 {
     0
 }
 
-// ── Runner Task ──────────────────────────────────────────────────────────────
 
-/// Spawn the long-running background Runner task.
-///
-/// This task owns `Hand` and processes `ExecCmd` requests one at a time.
 pub fn spawn(
     mut rx: mpsc::Receiver<ExecCmd>,
     screen_width: i32,
@@ -152,7 +149,6 @@ pub fn spawn(
     tokio::spawn(async move {
         info!("Runner task started");
 
-        // Hand is owned locally by this task and only used while holding QUEUE_LOCK
         let mut hand = HardwareBridge::new(screen_width, screen_height);
 
         while let Some(cmd) = rx.recv().await {
@@ -192,18 +188,23 @@ pub fn spawn(
             let mut abort_rx = abort_rx; // make mutable to use in loop
 
             for (idx, node) in nodes.iter().enumerate() {
-                // Check for abort signal before every node
                 if abort_rx.try_recv().is_ok() {
                     warn!("Runner: sequence aborted by yield");
                     break;
                 }
 
-                if node.kind != NodeKind::Action {
+                if node.kind() != NodeKind::Action {
                     continue;
                 }
 
                 let mut action = match &node.state {
-                    NodeState::Action(a) => a.clone(),
+                    NodeState::Action { action_type, point, delay_ms } => {
+                        Action {
+                            action_type: action_type.clone(),
+                            point: point.clone(),
+                            delay_ms: *delay_ms,
+                        }
+                    }
                     _ => {
                         error!(%node.id, "Runner: Expected Action state, found something else");
                         let _ = event_tx.send(RunEvent::Panic("Engine halt: Malformed decree data".into())).await;
@@ -301,10 +302,10 @@ pub fn spawn(
                         if !dry_run {
                             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                             if *detached {
-                                shell::spawn_detached(command, command, &arg_refs, &baton_allowed).await
+                                shell::spawn_detached(command.as_str(), command.as_str(), &arg_refs, &baton_allowed).await
                                     .map_err(RunnerError::from)
                             } else {
-                                shell::run(command, command, &arg_refs, &baton_allowed).await
+                                shell::run(command.as_str(), command.as_str(), &arg_refs, &baton_allowed).await
                                     .map(|_| ())
                                     .map_err(RunnerError::from)
                             }
@@ -325,10 +326,7 @@ pub fn spawn(
                 let _ = event_tx.send(RunEvent::Progress(idx)).await;
             }
 
-            // Always signal completion regardless of whether the loop ran to
-            // its natural end or was cut short by an abort/yield. Without this,
-            // the Atlas would remain stuck in the Yielded state with no
-            // recovery path until the user manually triggers a Reset.
+            // Always signal Done so the Atlas doesn't get stuck in Yielded state.
             let _ = event_tx.send(RunEvent::Done).await;
         }
     });

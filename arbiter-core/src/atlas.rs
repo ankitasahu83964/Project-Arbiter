@@ -1,11 +1,3 @@
-//! atlas.rs — core FSM orchestrator.
-//!
-//! Responsibilities:
-//!   - Owns the engine's `EngineState` machine.
-//!   - Drives sequence execution via an async run loop.
-//!   - Maintains the Decree registry (Summons -> Sequence).
-//!   - Emits `RunEvent`s to connected consumers and handles UI log pushes.
-
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
@@ -25,8 +17,6 @@ type PresenceSignalInner = PresenceSignal;
 #[cfg(not(feature = "presence"))]
 type PresenceSignalInner = ();
 
-// ── Engine State ──────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineState {
     Idle,
@@ -35,9 +25,6 @@ pub enum EngineState {
     Faulted,
 }
 
-// ── Atlas ─────────────────────────────────────────────────────────────────────
-
-/// The Atlas: owns engine state, registry, and drives sequence execution.
 pub struct Atlas {
     pub state: EngineState,
     pub engine_logs: Arc<Mutex<VecDeque<LogEntry>>>,
@@ -46,12 +33,8 @@ pub struct Atlas {
     pub active_presence_config: PresenceConfig,
     pub active_decree_id: Option<DecreeId>,
     
-    /// Tracks active Ward watchers by their Ward ID to allow stopping/restarting them.
     pub active_watchers: HashMap<String, tokio::sync::broadcast::Sender<()>>,
-
-    /// Pre-compiled glob matchers for `FileCreated` registry keys.
-    /// Keyed by the full registry key; the value matches the filename pattern portion.
-    /// Compiled once at registration to avoid re-parsing on every unmatched event.
+    /// Pre-compiled to avoid re-parsing on every event.
     compiled_patterns: HashMap<String, globset::GlobMatcher>,
 
     // Held during an active sequence to allow interruption.
@@ -135,7 +118,6 @@ impl Atlas {
         let mut key = summons.to_registry_key();
         let mut decree = self.registry.get(&key).cloned();
 
-        // ── Fuzzy Matching for File Events ──
         if decree.is_none() {
             if let Summons::FileCreated { watch_path, .. } = &summons {
                 let filename = match &summons {
@@ -201,8 +183,7 @@ impl Atlas {
     pub fn register_decree(&mut self, summons_key: String, decree: Decree) {
         info!(%summons_key, "Atlas: registering decree");
 
-        // Pre-compile glob matcher for FileCreated summons so the fuzzy-match
-        // loop can reuse it without re-parsing the pattern on every event.
+        // Pre-compile glob matcher for FileCreated summons.
         if summons_key.starts_with("FileCreated|") {
             let parts: Vec<&str> = summons_key.splitn(3, '|').collect();
             if let Some(&pattern) = parts.get(2) {
@@ -236,10 +217,8 @@ impl Atlas {
 
         loop {
             tokio::select! {
-                // 1. Process Shutdown
                 _ = &mut *shutdown_rx => {
                     info!("Atlas: shutting down");
-                    // Stop all watchers
                     for (id, tx) in self.active_watchers.drain() {
                         debug!(%id, "Atlas: stopping watcher on shutdown");
                         let _ = tx.send(());
@@ -250,7 +229,6 @@ impl Atlas {
                     break;
                 }
 
-                // ── Process Manual Reset ──
                 Some(_) = reset_rx.recv() => {
                     match self.state {
                         EngineState::Executing => self.reset_state(&log_broadcast, "Active sequence aborted by manual reset."),
@@ -260,7 +238,6 @@ impl Atlas {
                     }
                 }
 
-                // ── Process Forge Commands ──
                 Some(cmd) = forge_cmd_rx.recv() => {
                     match cmd {
                         ForgeCommand::SetPaused { paused } => {
@@ -294,7 +271,9 @@ impl Atlas {
                             } else {
                                 ledger.decrees.push(def.clone());
                             }
-                            let _ = crate::ledger::save(&ledger);
+                            if let Err(e) = crate::ledger::save(&ledger) {
+                                error!(%e, "Atlas: Failed to save ledger after updating decree");
+                            }
 
                             // 2. Hot-reload logic
                             let mut context = EnvContext::new();
@@ -308,7 +287,6 @@ impl Atlas {
                             let summons = match &def.summons {
                                 crate::ledger::SummonsDef::FileCreated { ward_id, pattern, recursive } => {
                                     let normalized_ward_id = normalize_windows_path(ward_id);
-                                    // 2a. Ensure the Ward exists and is up to date
                                     let mut ward_exists = false;
                                     if let Some(w) = ledger.wards.iter_mut().find(|w| normalize_windows_path(&w.path.to_string_lossy()) == normalized_ward_id) {
                                         ward_exists = true;
@@ -335,7 +313,6 @@ impl Atlas {
                                             recursive: *recursive,
                                         };
                                         ledger.wards.push(new_ward.clone());
-                                        // Save again to persist the new ward
                                         let _ = crate::ledger::save(&ledger);
                                         let stop_tx = crate::vigil::fs::spawn_watcher(new_ward, filter.clone(), vigil_tx.clone());
                                         self.active_watchers.insert(normalized_ward_id.clone(), stop_tx);
@@ -407,7 +384,9 @@ impl Atlas {
                                 crate::ledger::ArbiterLedger::default()
                             });
                             ledger.wards = dedupe_wards(wards);
-                            let _ = crate::ledger::save(&ledger);
+                            if let Err(e) = crate::ledger::save(&ledger) {
+                                error!(%e, "Atlas: Failed to save ledger after updating wards");
+                            }
                             merge_ward_paths_into_signet(
                                 ledger.wards.iter().map(|w| w.path.to_string_lossy().to_string())
                             );
@@ -540,7 +519,6 @@ impl Atlas {
                     }
                 }
 
-                // 2. Process incoming Triggers (Summons)
                 Some(summons) = vigil_rx.recv() => {
                     if self.paused {
                         debug!("Atlas: ignoring Summons, Engine is paused");
@@ -557,7 +535,6 @@ impl Atlas {
                     self.active_watchers.retain(|_, tx| tx.receiver_count() > 0);
                 }
 
-                // 3. Process Human Yield (Presence)
                 res = async {
                     #[cfg(feature = "presence")]
                     { presence_rx.recv().await }
@@ -589,7 +566,6 @@ impl Atlas {
                     }
                 }
 
-                // 4. Process Runner Status updates
                 Some(event) = run_event_rx.recv() => {
                     self.handle_run_event(event, &log_broadcast);
                     if self.state == EngineState::Idle && !self.paused {
@@ -754,10 +730,9 @@ impl Default for Atlas {
     }
 }
 
-// ── Graph Compiler ──────────────────────────────────────────────────────────
 
 pub fn compile_sequence(nodes_map: &HashMap<NodeId, DecreeNode>) -> Option<Vec<DecreeNode>> {
-    let entry = nodes_map.values().find(|n| n.kind == NodeKind::Entry)?;
+    let entry = nodes_map.values().find(|n| n.kind() == NodeKind::Entry)?;
 
     let mut sequence = Vec::new();
     let mut queue = std::collections::VecDeque::new();
@@ -770,7 +745,7 @@ pub fn compile_sequence(nodes_map: &HashMap<NodeId, DecreeNode>) -> Option<Vec<D
             continue;
         }
         if let Some(node) = nodes_map.get(&id) {
-            if node.kind != NodeKind::Entry {
+            if node.kind() != NodeKind::Entry {
                 sequence.push(node.clone());
             }
             let mut next: Vec<_> = node.next_nodes.values().collect();
@@ -786,7 +761,6 @@ pub fn compile_sequence(nodes_map: &HashMap<NodeId, DecreeNode>) -> Option<Vec<D
     Some(sequence)
 }
 
-/// Helper: push a log entry into a shared log buffer, capping at 1 000 lines.
 pub fn push_log(
     logs: &Arc<Mutex<VecDeque<LogEntry>>>,
     tag: &str,

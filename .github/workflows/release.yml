@@ -135,7 +135,7 @@ jobs:
             2. Run `arbiter.exe` as Administrator to start the background service.
             3. Open Forge from the system tray icon (`Open Forge`).
 
-            Configuration (ledger.json and signet.vault) is created automatically in an `arbiter-data` directory next to the executables on first launch.
+            Configuration (ledger.toml and arbiter.vault) is created automatically in an `arbiter-data` directory next to the executables on first launch.
           files: arbiter-*.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

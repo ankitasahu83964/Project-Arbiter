@@ -1,5 +1,3 @@
-//! vigil.rs — OS-level signal watchers (File System, Hotkeys, Processes).
-
 #[cfg(feature = "vigil-sys")]
 pub mod sys;
 
@@ -13,15 +11,11 @@ use std::time::Instant;
 use crate::decree::{EnvContext, Summons, WardConfig, WardLayer};
 
 lazy_static::lazy_static! {
-    /// Tracks the last fire time of event signatures to prevent rapid double-execution.
     static ref COOLDOWN_MAP: Arc<Mutex<HashMap<String, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
-/// The debounce window (milliseconds). Triggers within this window for the same
-/// signature are dropped.
 const DEBOUNCE_MS: u64 = 400;
 
-/// Returns true if the event signature is currently in cooldown.
 fn is_debounced(signature: &str) -> bool {
     let mut map = match COOLDOWN_MAP.lock() {
         Ok(guard) => guard,
@@ -41,7 +35,6 @@ fn is_debounced(signature: &str) -> bool {
     
     map.insert(signature.to_string(), now);
     
-    // Prune old entries occasionally
     if map.len() > 100 {
         map.retain(|_, v| now.duration_since(*v).as_millis() < 5000);
     }
@@ -49,21 +42,14 @@ fn is_debounced(signature: &str) -> bool {
     false
 }
 
-// ── Shared Event Channel ──────────────────────────────────────────────────────
 
-/// Create a bounded channel for Vigil → Atlas event delivery.
 pub fn channel(capacity: usize) -> (mpsc::Sender<Summons>, mpsc::Receiver<Summons>) {
     mpsc::channel(capacity)
 }
 
-// ── Hibernation Guard ─────────────────────────────────────────────────────────
 
-/// Maximum age (seconds) of a queued event before it is discarded on wake.
 const STALE_EVENT_THRESHOLD_SECS: u64 = 5;
 
-/// Returns `true` if an event timestamp is too old to act upon.
-///
-/// Use this after a system sleep/wake cycle to drain stale queued events.
 pub fn is_stale(event_age_secs: u64) -> bool {
     if event_age_secs > STALE_EVENT_THRESHOLD_SECS {
         warn!(
@@ -75,9 +61,7 @@ pub fn is_stale(event_age_secs: u64) -> bool {
     false
 }
 
-// ── Temporary-File Filter ─────────────────────────────────────────────────────
 
-/// Returns `true` for in-progress download/write extensions that should be ignored.
 pub fn is_temp_file(path: &str) -> bool {
     matches!(
         std::path::Path::new(path)
@@ -88,11 +72,6 @@ pub fn is_temp_file(path: &str) -> bool {
 }
 
 
-/// Checks whether a file has finished writing using a successive size check
-/// (The Steady State guard).
-///
-/// Polls the file size twice with a 400 ms delay. If both samples match and
-/// are non-zero the write is considered complete.
 pub fn is_write_complete(path: &str) -> bool {
     let size_a = std::fs::metadata(path).map(|m| m.len()).ok();
     std::thread::sleep(std::time::Duration::from_millis(400));
@@ -107,7 +86,6 @@ pub fn is_write_complete(path: &str) -> bool {
     }
 }
 
-// ── File-System Watcher (vigil-fs) ────────────────────────────────────────────
 
 
 #[cfg(feature = "vigil-fs")]
@@ -117,9 +95,6 @@ pub mod fs {
     use globset::GlobMatcher;
     use tokio::sync::broadcast;
 
-    /// Spawn a file-system watcher for the Ward described by `ward`.
-    /// 
-    /// Returns a broadcast sender that can be used to signal the watcher to shutdown.
     pub fn spawn_watcher(
         ward: WardConfig,
         filter: crate::filter::ArbiterFilter,
@@ -134,7 +109,6 @@ pub mod fs {
 
         info!(%pattern, path = %watch_path.display(), analytical, recursive, "Vigil-fs: spawning watcher");
 
-        // Pre-compile glob
         let matcher: Option<GlobMatcher> = if !pattern.is_empty() {
             match globset::GlobBuilder::new(&pattern)
                 .case_insensitive(true)
@@ -165,7 +139,6 @@ pub mod fs {
             let mut missing_logged = false;
 
             loop {
-                // Check for shutdown signal
                 if shutdown_rx.try_recv().is_ok() {
                     info!(%ward_id, "Vigil-fs: shutdown signal received, terminating watcher");
                     break;
@@ -204,22 +177,18 @@ pub mod fs {
                     }
                 }
 
-                // Drain notify events with a short timeout to keep checking shutdown_rx
-                match nrx.try_recv() {
+                match nrx.recv_timeout(std::time::Duration::from_millis(100)) {
                     Ok(Ok(event)) if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) => {
-                        // Load signet config FRESH for every event batch to respect live Jailing efficiently
                         let signet_config = crate::signet::load().unwrap_or_default();
 
                         for path in &event.paths {
                             let path_str = path.to_string_lossy().to_string();
                             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-                            // 1. Ignore directories and internal writes immediately
                             if path.is_dir() || filename.is_empty() || filter.is_own(&path_str) {
                                 continue;
                             }
 
-                            // 2. Recursion Allowed/Denied (Jail) Check
                             if crate::signet::is_path_restricted(&signet_config, path) {
                                 continue; // Authoritative WARN is handled inside signet::is_path_restricted
                             }
@@ -233,7 +202,6 @@ pub mod fs {
 
                             let mut context = super::EnvContext::new();
                             
-                            // ── Level 0: Identity ─────────────────────────────────────
                             context.insert("file_path", &path_str);
                             if let Some(parent) = path.parent() {
                                 context.insert("file_dir", &parent.to_string_lossy());
@@ -245,8 +213,6 @@ pub mod fs {
                             context.insert("timestamp", &now_unix.to_string());
                             context.insert("timestamp_local", &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string());
 
-                            // ── Level 1: Physical Attributes (OS metadata) ─────────────
-                            // Free — no file handles opened, just stat() calls.
                             if let Ok(meta) = std::fs::metadata(path) {
                                 let bytes = meta.len();
                                 context.insert("file_size", &bytes.to_string());
@@ -278,14 +244,11 @@ pub mod fs {
                             let is_link = std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
                             context.insert("file_is_link", &is_link.to_string());
 
-                            // File owner: resolved via Win32 security APIs on Windows.
-                            // Returns "DOMAIN\Account" (or just "Account" for local accounts).
-                            #[cfg(windows)]
-                            if let Some(owner) = get_file_owner_windows(&path_str) {
-                                context.insert("file_owner", &owner);
-                            }
+                                #[cfg(windows)]
+                                if let Some(owner) = get_file_owner_windows(&path_str) {
+                                    context.insert("file_owner", &owner);
+                                }
 
-                            // ── Level 2: Deep Vigil hook (Analytical) ──────────────────
                             context.source_path = Some(path.clone());
                             context.integrity_scan = analytical;
 
@@ -295,14 +258,9 @@ pub mod fs {
                                 context,
                             };
 
-                            // Build the debounce signature before moving `summons` into
-                            // the stability thread so we can check it after the sleep.
                             let debounce_sig = format!("{}|{}", summons.to_registry_key(), filename);
                             let path_str_check = path_str.clone();
 
-                            // Offload the 400 ms write-stability poll to a one-shot task
-                            // so this watcher loop is freed immediately to pick up the
-                            // next filesystem event without sitting idle on every file.
                             let tx_clone = tx.clone();
                             std::thread::spawn(move || {
                                 if !super::is_write_complete(&path_str_check) { return; }
@@ -311,12 +269,9 @@ pub mod fs {
                             });
                         }
                     }
-                    Ok(Err(e)) => warn!(%e, "Vigil-fs: notify error"),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-                    _ => {}
+                    Ok(_) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
         });
@@ -324,7 +279,6 @@ pub mod fs {
         shutdown_tx
     }
 
-    /// Format a byte count into a human-readable string (KB / MB / GB).
     fn format_bytes(bytes: u64) -> String {
         const KB: u64 = 1_024;
         const MB: u64 = 1_024 * KB;
@@ -340,15 +294,6 @@ pub mod fs {
         }
     }
 
-    /// Resolve the owner of a file to a `"DOMAIN\\Account"` string using Win32
-    /// security APIs.
-    ///
-    /// Steps:
-    ///   1. `GetNamedSecurityInfoW` — fetch the owner SID from the DACL.
-    ///   2. `LookupAccountSidW`     — translate the SID to a human-readable name.
-    ///   3. `LocalFree`             — release the security descriptor immediately.
-    ///
-    /// Returns `None` on any Win32 error so callers can silently omit the key.
     #[cfg(windows)]
     fn get_file_owner_windows(path: &str) -> Option<String> {
         use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
@@ -420,7 +365,6 @@ pub mod fs {
 } // end pub mod fs
 
 
-// ── Global Hotkey Watcher (vigil-keys) ───────────────────────────────────────
 
 #[cfg(feature = "vigil-keys")]
 pub mod keys {

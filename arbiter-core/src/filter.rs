@@ -1,11 +1,3 @@
-//! filter.rs — explicit thread-ID / path tagging guard.
-//!
-//! Prevents The Vigil from reacting to file creations caused by The Inscribe
-//! (Arbiter's own File I/O component).
-//!
-//! When The Inscribe moves a file, it adds the destination path here.
-//! The Vigil checks this filter before dispatching a Summons.
-
 use std::{
     collections::HashMap,
     path::Path,
@@ -25,13 +17,9 @@ fn normalize_key(path: impl AsRef<Path>) -> String {
     abs.to_string_lossy().to_lowercase()
 }
 
-/// A thread-safe, shared set of paths and flags currently being manipulated by Arbiter itself.
 #[derive(Debug, Clone, Default)]
 pub struct ArbiterFilter {
-    /// Maps normalized paths to the time they were last marked.
     active_paths: Arc<Mutex<HashMap<String, Instant>>>,
-    /// When true, the engine is generating hardware input (Hand is active).
-    /// Used by The Presence to inhibit self-abort cycles.
     interference_lock: Arc<AtomicBool>,
 }
 
@@ -40,7 +28,6 @@ impl ArbiterFilter {
         Self::default()
     }
 
-    /// Mark a path as currently being written by Arbiter.
     pub fn mark(&self, path: impl AsRef<Path>) {
         let key = normalize_key(path);
         if let Ok(mut map) = self.active_paths.lock() {
@@ -48,8 +35,6 @@ impl ArbiterFilter {
         }
     }
 
-    /// Unmark a path (Arbiter finishes writing). 
-    /// Note: Paths are also automatically expired after 3 seconds in is_own.
     pub fn unmark(&self, path: impl AsRef<Path>) {
         let key = normalize_key(path);
         if let Ok(mut map) = self.active_paths.lock() {
@@ -57,11 +42,9 @@ impl ArbiterFilter {
         }
     }
 
-    /// Returns `true` if this path was recently marked by Arbiter (within 3 seconds).
     pub fn is_own(&self, path: impl AsRef<Path>) -> bool {
         let key = normalize_key(path);
         if let Ok(mut map) = self.active_paths.lock() {
-            // Prune expired entries while we're here
             let now = Instant::now();
             let expiry = Duration::from_secs(3);
             map.retain(|_, &mut time| now.duration_since(time) < expiry);
@@ -72,17 +55,14 @@ impl ArbiterFilter {
         }
     }
 
-    /// Inhibit presence detection (Hand is about to act).
     pub fn inhibit_presence(&self) {
         self.interference_lock.store(true, Ordering::SeqCst);
     }
 
-    /// Resume presence detection (Hand has finished).
     pub fn resume_presence(&self) {
         self.interference_lock.store(false, Ordering::SeqCst);
     }
 
-    /// Returns `true` if presence detection is currently inhibited.
     pub fn is_inhibited(&self) -> bool {
         self.interference_lock.load(Ordering::SeqCst)
     }

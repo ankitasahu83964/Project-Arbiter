@@ -1,17 +1,7 @@
-//! main.rs — Arbiter background service entry point.
-//!
-//! Responsibilities:
-//!   - Initialise the Tokio async runtime.
-//!   - Setup structured logging (Stdout + Daily Rolling File).
-//!   - Start The Atlas (Brain), The Runner (Muscle), and The Vigil (Senses).
-//!   - Expose real-time IPC telemetry via Windows Named Pipes.
-//!   - Host the system tray lifecycle (blocking main thread).
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc};
-use tokio_util::codec::{FramedWrite, LinesCodec};
 use futures::{SinkExt, StreamExt};
 use tracing::info;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -25,9 +15,6 @@ use arbiter_core::{
 
 mod tray;
 
-// ── Daily Rolling Writer ──────────────────────────────────────────────────────
-
-/// A simple daily rolling writer for tracing-appender.
 struct ArbiterRollingWriter {
     base_dir: std::path::PathBuf,
 }
@@ -60,11 +47,8 @@ impl std::io::Write for ArbiterRollingWriter {
     }
 }
 
-// ── Main Entry ────────────────────────────────────────────────────────────────
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 0. Logging & Professional Banner
     let log_dir = arbiter_core::signet::data_dir().join("logs");
     let file_appender = ArbiterRollingWriter::new(log_dir);
     let (non_blocking_file, _guard) = tracing_appender::non_blocking(file_appender);
@@ -93,9 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Deterministic System Orchestration
     
     "#);
-    info!("Arbiter Engine: booting version 0.1.0");
+    info!("Arbiter Engine: booting version 2.0.0");
 
-    // ── Infrastructure ────────────────────────────────────────────────────────
     let filter = ArbiterFilter::new();
 
     let (vigil_tx, mut vigil_rx) = mpsc::channel(100);
@@ -108,12 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (reset_tx, mut reset_rx) = mpsc::channel::<()>(1);
     let (forge_cmd_tx, mut forge_cmd_rx) = mpsc::channel::<ForgeCommand>(10);
 
-    // IPC Broadcast for Named Pipe consumers
     let (log_broadcast_tx, _) = broadcast::channel::<LogEntry>(1024);
-
-    // ── Components ────────────────────────────────────────────────────────────
-
-    // IPC Server (Telemetry): Named Pipe PIPE_TELEMETRY
     let ipc_broadcast = log_broadcast_tx.clone();
     tokio::spawn(async move {
         use tokio::net::windows::named_pipe::ServerOptions;
@@ -128,10 +106,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if server.connect().await.is_ok() {
                     let mut rx = ipc_broadcast.subscribe();
                     let (_, writer) = tokio::io::split(server);
-                    let mut framed = FramedWrite::new(writer, LinesCodec::new());
+                    let mut framed = tokio_util::codec::FramedWrite::new(writer, tokio_util::codec::LengthDelimitedCodec::new());
                     while let Ok(entry) = rx.recv().await {
-                        if let Ok(json) = serde_json::to_string(&entry) {
-                            if framed.send(json).await.is_err() { break; }
+                        if let Ok(bin) = rmp_serde::to_vec(&entry) {
+                            if framed.send(bytes::Bytes::from(bin)).await.is_err() { break; }
                         }
                     }
                 }
@@ -140,11 +118,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // IPC Server (Commands): Named Pipe PIPE_COMMAND
+    // IPC Server (Commands)
     let cmd_tx = forge_cmd_tx.clone();
     tokio::spawn(async move {
         use tokio::net::windows::named_pipe::ServerOptions;
-        use tokio_util::codec::FramedRead;
+        // use tokio_util::codec::LengthDelimitedCodec; // removed unused
         loop {
             let server = ServerOptions::new()
                 .first_pipe_instance(true)
@@ -154,11 +132,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(server) = server {
                 if server.connect().await.is_ok() {
                     let (reader, _) = tokio::io::split(server);
-                    let mut framed = FramedRead::new(reader, LinesCodec::new());
+                    let mut framed = tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LengthDelimitedCodec::new());
                     while let Some(res) = framed.next().await {
-                        if let Ok(line) = res {
-                            if let Ok(cmd) = serde_json::from_str::<ForgeCommand>(&line) {
-                                let _ = cmd_tx.send(cmd).await;
+                        if let Ok(bytes) = res {
+                            match rmp_serde::from_slice::<ForgeCommand>(&bytes) {
+                                Ok(cmd) => {
+                                    let _ = cmd_tx.send(cmd).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!(%e, "IPC: Failed to parse ForgeCommand from MessagePack");
+                                }
                             }
                         }
                     }
@@ -168,8 +151,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 1. Spawn Runner
-    // ...
     info!("Arbiter Engine: standing by");
     let _ = log_broadcast_tx.send(LogEntry {
         time: chrono::Utc::now().to_rfc3339(),
@@ -179,7 +160,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         decree_id: None,
     });
 
-    // Heartbeat task
     let heartbeat_broadcast = log_broadcast_tx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -206,8 +186,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Runner: mapping display boundaries to {}x{}", screen_width, screen_height);
     arbiter_bridge::runner::spawn(exec_cmd_rx, screen_width, screen_height, filter.clone());
 
-    // 2. Spawn Mapping loop (Atlas -> Runner)
-    //
     // Signet config is loaded fresh on every execution via signet::load().
     // This call is cheap because load() checks the RwLock cache first and
     // only hits disk when reload_cache() has been called (which happens
@@ -233,11 +211,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 3. Spawn Watchers
     arbiter_core::presence::spawn_monitor(presence_tx, filter.clone());
     info!("Vigil: presence monitoring active");
 
-    // 4. Initialise Atlas & Load Ledger
     let mut atlas = Atlas::new();
     let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
         tracing::error!("Failed to load ledger: {}", e);
@@ -246,7 +222,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     arbiter_core::ledger::apply(&ledger, &mut atlas, &vigil_tx, &filter);
     info!("Atlas: engine core ready");
 
-    // 5. Spawn Atlas loop
     let atlas_broadcast = log_broadcast_tx.clone();
     let atlas_loop_broadcast = atlas_broadcast.clone();
     let atlas_vigil_tx = vigil_tx.clone();
@@ -273,7 +248,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paused_cell = Arc::new(std::sync::Mutex::new(false));
     let pause_cmd_tx = forge_cmd_tx.clone();
 
-    // ── Tray (blocks main thread) ─────────────────────────────────────────────
     let tray_broadcast = atlas_broadcast.clone();
     tray::run_event_loop(move |event, proxy| {
         match event {

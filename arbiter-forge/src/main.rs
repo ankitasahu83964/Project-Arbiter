@@ -20,27 +20,73 @@ thread_local! {
     static BATON_MODEL:  Rc<VecModel<SharedString>> = Rc::new(VecModel::default());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Tiny helper to generate sequential IDs.
-// ─────────────────────────────────────────────────────────────────────────────
-fn next_id() -> String {
+fn generate_decree_id(label: &str) -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     static CTR: AtomicU32 = AtomicU32::new(1);
-    format!("id-{}", CTR.fetch_add(1, Ordering::Relaxed))
+
+    let slug: String = label.to_lowercase()
+        .chars()
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .filter(|&c| c.is_alphanumeric() || c == '-')
+        .collect();
+
+    if slug.is_empty() {
+        format!("id-{}", CTR.fetch_add(1, Ordering::Relaxed))
+    } else {
+        slug
+    }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Commands
-// ─────────────────────────────────────────────────────────────────────────────
+fn generate_step_id() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static STEP_CTR: AtomicU32 = AtomicU32::new(1);
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let n = STEP_CTR.fetch_add(1, Ordering::Relaxed);
+    format!("step-{}-{}", epoch, n)
+}
+
 
 async fn send_command(cmd: &ForgeCommand) {
     use tokio::net::windows::named_pipe::ClientOptions;
-    use tokio::io::AsyncWriteExt;
-    if let Ok(mut client) = ClientOptions::new().open(PIPE_COMMAND) {
-        if let Ok(json) = serde_json::to_string(cmd) {
-            let _ = client.write_all(json.as_bytes()).await;
-            let _ = client.write_all(b"\n").await;
-        }
+    
+    let result = async {
+        use tokio_util::codec::FramedWrite;
+        use tokio_util::codec::LengthDelimitedCodec;
+        use futures::SinkExt;
+
+        let client = ClientOptions::new().open(PIPE_COMMAND)?;
+        let mut framed = FramedWrite::new(client, LengthDelimitedCodec::new());
+        let bin = rmp_serde::to_vec(cmd).map_err(std::io::Error::other)?;
+        framed.send(bytes::Bytes::from(bin)).await?;
+        Ok::<(), std::io::Error>(())
+    }.await;
+
+    if let Err(e) = result {
+        tracing::error!(%e, "Forge: IPC send failed");
+        LOG_MODEL.with(|m| {
+            m.push(LogEntry {
+                time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
+                tag: "IPC".into(),
+                tag_color: Color::from_rgb_u8(244, 63, 94),
+                msg: format!("IPC Failure: {}", e).into(),
+                decree_id: "".into(),
+            });
+        });
+    } else {
+        tracing::info!("Forge: Command sent successfully");
+        LOG_MODEL.with(|m| {
+            m.push(LogEntry {
+                time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
+                tag: "FORGE".into(),
+                tag_color: Color::from_rgb_u8(34, 197, 94),
+                msg: "Command committed to engine successfully.".into(),
+                decree_id: "".into(),
+            });
+        });
     }
 }
 
@@ -72,8 +118,14 @@ async fn app_is_available(wait_for: Duration) -> bool {
 }
 
 fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef {
-    let id = DecreeId(ui.get_active_decree_id().to_string());
     let label = ui.get_active_decree_label().to_string();
+    let id_str = ui.get_active_decree_id().to_string();
+    
+    let id = if id_str.is_empty() {
+        DecreeId(generate_decree_id(&label))
+    } else {
+        DecreeId(id_str)
+    };
     
     let _trigger_type = ui.get_summons_trigger_type();
     let summons = match ui.get_summons_trigger_type() {
@@ -93,16 +145,13 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
 
 
     let mut nodes = Vec::new();
-    // Entry node
     nodes.push(DecreeNode {
         id: NodeId("entry".into()),
         label: "Start".into(),
-        kind: NodeKind::Entry,
         state: arbiter_core::decree::NodeState::Empty,
         next_nodes: std::collections::HashMap::new(),
     });
 
-    // Map DecreeStep -> DecreeNode
     STEP_MODEL.with(|m| {
         for i in 0..m.row_count() {
             if let Some(step) = m.row_data(i) {
@@ -148,25 +197,27 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
 
                 let mut next_nodes = std::collections::HashMap::new();
                 if let Some(nid) = next_id {
-                    next_nodes.insert("Next".into(), nid);
+                    next_nodes.insert("success".into(), nid);
                 }
 
                 nodes.push(DecreeNode {
                     id: step_id,
                     label: step.title.to_string(),
-                    kind: NodeKind::Action,
-                    state: arbiter_core::decree::NodeState::Action(action),
+                    state: arbiter_core::decree::NodeState::Action { 
+                        action_type: action.action_type, 
+                        point: action.point, 
+                        delay_ms: action.delay_ms 
+                    },
                     next_nodes,
                 });
             }
         }
     });
 
-    // Fix the first node link if we have steps
     if nodes.len() > 1 {
         let first_action_id = nodes[1].id.clone();
-        if let Some(entry) = nodes.iter_mut().find(|n| n.kind == NodeKind::Entry) {
-            entry.next_nodes.insert("Next".into(), first_action_id);
+        if let Some(entry) = nodes.iter_mut().find(|n| n.kind() == NodeKind::Entry) {
+            entry.next_nodes.insert("success".into(), first_action_id);
         }
     }
 
@@ -199,9 +250,6 @@ fn next_new_decree_label() -> String {
     format!("New Decree {}", max_n + 1)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Ledger Logic
-// ─────────────────────────────────────────────────────────────────────────────
 
 fn sync_ledger_to_ui() {
     let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
@@ -210,7 +258,6 @@ fn sync_ledger_to_ui() {
     });
     
     DECREE_MODEL.with(|m| {
-        // Simple reconciliation: Update in-place to avoid flicker
         let mut model_indices = std::collections::HashMap::new();
         for i in 0..m.row_count() {
             if let Some(row) = m.row_data(i) {
@@ -322,7 +369,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = ArbiterForge::new()?;
     let ui_handle = ui.as_weak();
 
-    // ── Push models into the UI ───────────────────────────────────────────────
     let log_model     = LOG_MODEL.with(|m| m.clone());
     let decree_model  = DECREE_MODEL.with(|m| m.clone());
     let step_model    = STEP_MODEL.with(|m| m.clone());
@@ -337,11 +383,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_trusted_paths(ModelRc::from(ts_path_model.clone()));
     ui.set_baton_allowed(ModelRc::from(baton_model.clone()));
 
-    // Sync with data from disk
     sync_ledger_to_ui();
     sync_signet_to_ui(&ui);
 
-    // Seed a startup log
     log_model.push(LogEntry {
         time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
         tag: "FORGE".into(),
@@ -350,24 +394,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         decree_id: "".into(),
     });
 
-    // Select the first decree by default if it exists
     DECREE_MODEL.with(|m| {
         if let Some(first) = m.row_data(0) {
             let _ = ui_handle.upgrade_in_event_loop(move |ui| {
                 ui.set_active_decree_id(first.id);
                 ui.set_active_decree_label(first.label);
-                ui.set_active_decree_status(first.status);
-                // Trigger selection logic manually
+                ui.set_active_decree_status(0);
                 ui.invoke_select_decree(ui.get_active_decree_id());
             });
         }
     });
 
-    // ── Telemetry: Named Pipe from arbiter-app ────────────────────────────────
     let ui_handle_telemetry = ui_handle.clone();
     tokio::spawn(async move {
         use tokio::net::windows::named_pipe::ClientOptions;
-        use tokio_util::codec::{FramedRead, LinesCodec};
+        use tokio_util::codec::FramedRead;
         use futures::StreamExt;
         use tokio::time::timeout;
 
@@ -382,12 +423,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let mut framed = FramedRead::new(client, LinesCodec::new());
+            let mut framed = FramedRead::new(client, tokio_util::codec::LengthDelimitedCodec::new());
 
             loop {
                 match timeout(watchdog_duration, framed.next()).await {
-                    Ok(Some(Ok(line))) => {
-                        match serde_json::from_str::<WireLogEntry>(&line) {
+                    Ok(Some(Ok(bytes))) => {
+                        match rmp_serde::from_slice::<WireLogEntry>(&bytes) {
                             Ok(core_entry) => {
                                 if core_entry.tag == "VIGIL" && core_entry.message.contains("Heartbeat") {
                                     continue;
@@ -413,7 +454,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     core_entry.time.clone()
                                 };
 
-                                // Determine engine running state from RUNNER tags
                                 let is_runner = core_entry.tag == "RUNNER" || core_entry.tag == "Runner";
                                 let is_done = is_runner && (
                                     core_entry.message.contains("complete")
@@ -450,7 +490,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if should_sync_signet {
                                         sync_signet_to_ui(&ui);
                                     }
-                                    // Reflect engine execution state in the UI tracer
                                     if is_runner {
                                         ui.set_engine_running(!is_done);
                                     }
@@ -458,7 +497,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 });
                             }
                             Err(e) => {
-                                tracing::error!("Forge: failed to parse telemetry JSON: {} | Line: {}", e, line);
+                                tracing::error!("Forge: failed to parse telemetry MessagePack: {}", e);
                             }
                         }
                     }
@@ -483,31 +522,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ── Callbacks ─────────────────────────────────────────────────────────────
-
     ui.on_request_close(move || {
         info!("Forge: Received close request. Terminating event loop.");
         slint::quit_event_loop().unwrap();
     });
 
-    // COMMIT CHANGES → save-decree
     ui.on_save_decree({
         let ui_handle = ui_handle.clone();
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 let def = collect_decree_from_ui(&ui);
-                // Validate before sending (Phase 3.2)
+                ui.set_active_decree_id(def.id.0.clone().into());
+                
                 if let Err(e) = def.validate() {
-                    LOG_MODEL.with(|m| {
-                        m.push(LogEntry {
-                            time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
-                            tag: "VALIDATE".into(),
-                            tag_color: Color::from_rgb_u8(244, 63, 94),
-                            msg: format!("Validation Error: {}", e).into(),
-                            decree_id: "".into(),
-                        });
-                    });
+                    tracing::error!("Forge: Validation failed for decree: {}", e);
                     return;
+                }
+
+                let mut ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
+                    tracing::error!("Forge: Failed to load ledger for saving: {}", e);
+                    arbiter_core::ledger::ArbiterLedger::default()
+                });
+
+                if let arbiter_core::ledger::SummonsDef::FileCreated { ward_id, recursive, .. } = &def.summons {
+                    let mut found = false;
+                    for ward in &mut ledger.wards {
+                        if ward.id == *ward_id {
+                            ward.recursive = *recursive;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        ledger.wards.push(arbiter_core::decree::WardConfig {
+                            id: ward_id.clone(),
+                            path: std::path::PathBuf::from(ward_id.clone()),
+                            pattern: String::new(), // Ward pattern is ignored in Arbiter in favor of Summons pattern
+                            recursive: *recursive,
+                            layer: arbiter_core::decree::WardLayer::Surface,
+                        });
+                    }
+                }
+
+                if let Some(existing) = ledger.decrees.iter_mut().find(|d| d.id == def.id) {
+                    *existing = def.clone();
+                } else {
+                    ledger.decrees.push(def.clone());
+                }
+
+                if let Err(e) = arbiter_core::ledger::save(&ledger) {
+                    tracing::error!("Forge: Failed to save ledger to disk: {}", e);
+                } else {
+                    info!("Forge: Decree '{}' saved directly to disk", def.label);
+                    sync_ledger_to_ui();
                 }
 
                 let cmd = ForgeCommand::SaveDecree(def);
@@ -552,21 +619,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // + New decree in sidebar header
     ui.on_new_decree({
         let decree_model = decree_model.clone();
         let step_model   = step_model.clone();
         let ui_handle    = ui_handle.clone();
         move || {
-            let id = next_id();
             let label = next_new_decree_label();
+            let id = generate_decree_id(&label);
             info!(new_id = %id, "Forge: new-decree");
             decree_model.push(DecreeEntry {
                 id:     id.clone().into(),
                 label:  label.clone().into(),
                 status: 0,
             });
-            // Clear the step canvas for the new decree
             while step_model.row_count() > 0 {
                 step_model.remove(0);
             }
@@ -586,17 +651,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Sidebar item click → select-decree
     ui.on_select_decree({
         let ui_handle    = ui_handle.clone();
         move |id| {
-            info!(decree_id = %id, "Forge: select-decree");
-            let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
-                tracing::error!("Forge: Failed to load ledger for selection: {}", e);
-                arbiter_core::ledger::ArbiterLedger::default()
-            });
-            if let Some(ord) = ledger.decrees.iter().find(|o| id == o.id.0) {
-                if let Some(ui) = ui_handle.upgrade() {
+            if id.is_empty() { return; }
+            if let Some(ui) = ui_handle.upgrade() {
+                // If this is already the active decree, don't reload from disk (prevents wiping unsaved edits)
+                if ui.get_active_decree_id() == id && ui.get_active_decree_status() != 0 {
+                    return;
+                }
+                
+                info!(decree_id = %id, "Forge: select-decree");
+                let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
+                    tracing::error!("Forge: Failed to load ledger for selection: {}", e);
+                    arbiter_core::ledger::ArbiterLedger::default()
+                });
+                if let Some(ord) = ledger.decrees.iter().find(|o| id == o.id.0) {
                     ui.set_active_decree_id(ord.id.0.clone().into());
                     ui.set_active_decree_label(ord.label.clone().into());
                     ui.set_active_decree_status(1); 
@@ -604,13 +674,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_presence_ignore_mouse(ord.presence_config.ignore_mouse);
                     ui.set_presence_ignore_keyboard(ord.presence_config.ignore_keyboard);
                     
-                    // Clear all Summons fields first to prevent 'bleeding'
                     ui.set_summons_path("".into());
                     ui.set_summons_pattern("".into());
                     ui.set_summons_combo("".into());
                     ui.set_summons_process("".into());
                     
-                    // Sync Summons
                     match &ord.summons {
                         SummonsDef::FileCreated { ward_id, pattern, recursive } => {
                             ui.set_summons_trigger_type(0);
@@ -631,13 +699,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // Sync Steps (Reconciliation)
                     STEP_MODEL.with(|m| {
                         let mut incoming_steps = Vec::new();
                         for node in &ord.nodes {
-                            if node.kind == NodeKind::Action {
-                                if let arbiter_core::decree::NodeState::Action(action) = &node.state {
-                                    let (step_type, arg_a, arg_b, subtext) = match &action.action_type {
+                            if node.kind() == NodeKind::Action {
+                                if let arbiter_core::decree::NodeState::Action { action_type, .. } = &node.state {
+                                    let (step_type, arg_a, arg_b, subtext) = match action_type {
                                         ActionType::InscribeMove { source, destination } => {
                                             (0, source.to_string_lossy().to_string(), destination.to_string_lossy().to_string(), "Inscribe: Move Mode".to_string())
                                         }
@@ -674,7 +741,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
 
-                        // Update STEP_MODEL in-place
                         while m.row_count() > incoming_steps.len() {
                             m.remove(m.row_count() - 1);
                         }
@@ -718,12 +784,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // + Append Action Step
     ui.on_append_step({
         let step_model = step_model.clone();
         let ui_handle = ui_handle.clone();
         move |step_type| {
-            let id = next_id();
+            let id = generate_step_id();
             let (title, subtext, arg_a, arg_b) = match step_type {
                 0 => ("Move File",     "Inscribe: relocate artifact",      "${env.file_path}", "C:\\Destination\\"),
                 1 => ("Shell Command", "Shell: execute external program",  "program.exe",      "${env.file_path}"),
@@ -754,13 +819,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_handle = ui_handle.clone();
         move |id| {
             info!(decree_id = %id, "Forge: remove-decree");
+
+            let mut ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
+                tracing::error!("Forge: Failed to load ledger for remove: {}", e);
+                arbiter_core::ledger::ArbiterLedger::default()
+            });
+            let id_str = id.to_string();
+            let before = ledger.decrees.len();
+            ledger.decrees.retain(|d| d.id.0 != id_str);
+            if ledger.decrees.len() != before {
+                if let Err(e) = arbiter_core::ledger::save(&ledger) {
+                    tracing::error!("Forge: Failed to persist decree removal: {}", e);
+                } else {
+                    info!(decree_id = %id_str, "Forge: Decree removed directly from disk");
+                }
+            }
+
             let cmd = ForgeCommand::RemoveDecree {
-                decree_id: id.to_string(),
+                decree_id: id_str,
             };
             tokio::spawn(async move {
                 send_command(&cmd).await;
             });
-            
+
             if let Some(ui) = ui_handle.upgrade() {
                 if ui.get_active_decree_id() == id {
                     ui.set_active_decree_id("".into());
@@ -830,12 +911,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
 
-    // ── Ward Callbacks ────────────────────────────────────────────────────────
     let ward_model_cb = WARD_MODEL.with(|m| m.clone());
     ui.on_add_ward({
         let ward_model_cb = ward_model_cb.clone();
         move || {
-            let id = next_id();
+            let id = generate_decree_id("");
             ward_model_cb.push(WardEntry {
                 id: id.into(),
                 path: "".into(),
@@ -920,7 +1000,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ── Signet Callbacks ──────────────────────────────────────────────────────
     let ts_path_model_cb = TS_PATH_MODEL.with(|m| m.clone());
     ui.on_add_trusted_path({
         let ts_path_model_cb = ts_path_model_cb.clone();
@@ -993,7 +1072,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ── IPC Save Callbacks ────────────────────────────────────────────────────
     ui.on_save_wards({
         let ward_model_cb = ward_model_cb.clone();
         move || {
@@ -1001,7 +1079,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut seen_paths = std::collections::HashSet::new();
             for i in 0..ward_model_cb.row_count() {
                 if let Some(w) = ward_model_cb.row_data(i) {
-                    // Quick validation - do not save if path is empty
                     if !w.path.is_empty() {
                         let normalized_path = normalize_windows_path(w.path.as_ref());
                         if !seen_paths.insert(normalized_path.clone()) {
@@ -1020,6 +1097,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+
+            let mut ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
+                tracing::error!("Forge: Failed to load ledger for ward save: {}", e);
+                arbiter_core::ledger::ArbiterLedger::default()
+            });
+            ledger.wards = wards.clone();
+            if let Err(e) = arbiter_core::ledger::save(&ledger) {
+                tracing::error!("Forge: Failed to save wards to disk: {}", e);
+            } else {
+                info!("Forge: Wards saved directly to disk");
+            }
+
             let cmd = ForgeCommand::SaveWards(wards);
             tokio::spawn(async move {
                 send_command(&cmd).await;
@@ -1055,6 +1144,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     launch_on_startup: ui.get_launch_on_startup(),
                 };
 
+                if let Err(e) = arbiter_core::signet::save(&cfg) {
+                    tracing::error!("Forge: Failed to save signet vault: {}", e);
+                } else {
+                    info!("Forge: Signet vault saved directly to disk");
+                }
+
                 let cmd = ForgeCommand::SaveSignet(cfg);
                 tokio::spawn(async move {
                     send_command(&cmd).await;
@@ -1064,7 +1159,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ── Run UI ────────────────────────────────────────────────────────────────
     ui.run()?;
     Ok(())
 }

@@ -13,7 +13,6 @@ use crate::atlas::Atlas;
 use crate::filter::ArbiterFilter;
 use crate::decree::{DecreeId, EnvContext, DecreeNode, Decree, PresenceConfig, Summons, WardConfig};
 
-// ── Errors ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
@@ -143,23 +142,34 @@ fn normalize_ledger(ledger: &mut ArbiterLedger) -> bool {
     changed
 }
 
-// ── Persistence Structures ───────────────────────────────────────────────────
 
-/// The complete on-disk representation of a user's configuration.
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ArbiterLedger {
+    #[serde(default = "default_ledger_version")]
     pub version: u32,
     pub wards: Vec<WardConfig>,
     pub decrees: Vec<DecreeDef>,
 }
 
-/// A named, serializable decree definition.
+impl Default for ArbiterLedger {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            wards: Vec::new(),
+            decrees: Vec::new(),
+        }
+    }
+}
+
+fn default_ledger_version() -> u32 { 1 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecreeDef {
     pub id: DecreeId,
     pub label: String,
     pub summons: SummonsDef,
     pub nodes: Vec<DecreeNode>,
+    #[serde(default)]
     pub presence_config: PresenceConfig,
 }
 
@@ -175,13 +185,33 @@ impl DecreeDef {
 
         for node in &self.nodes {
             node_ids.insert(&node.id);
-            if node.kind == crate::decree::NodeKind::Entry {
+            if node.kind() == crate::decree::NodeKind::Entry {
                 has_entry = true;
             }
         }
 
         if !has_entry {
             return Err("Decree sequence is missing an Entry node".into());
+        }
+
+        // Validate Summons
+        match &self.summons {
+            SummonsDef::FileCreated { ward_id, .. } => {
+                if ward_id.trim().is_empty() {
+                    return Err("File monitor path cannot be empty".into());
+                }
+            }
+            SummonsDef::Hotkey { combo } => {
+                if combo.trim().is_empty() {
+                    return Err("Hotkey combination cannot be empty".into());
+                }
+            }
+            SummonsDef::ProcessAppeared { name } => {
+                if name.trim().is_empty() {
+                    return Err("Process name cannot be empty".into());
+                }
+            }
+            SummonsDef::Manual => {}
         }
 
         // Check for orphaned transitions
@@ -200,7 +230,6 @@ impl DecreeDef {
     }
 }
 
-/// Serializable trigger definition (mirrors Summons but without runtime fields).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum SummonsDef {
@@ -223,9 +252,7 @@ fn default_recursive() -> bool {
     true
 }
 
-// ── I/O Operations ───────────────────────────────────────────────────────────
 
-/// Load the Arbiter ledger from disk.
 pub fn load() -> Result<ArbiterLedger, LedgerError> {
     let path = crate::signet::data_dir().join("ledger.toml");
     if !path.exists() {
@@ -260,7 +287,6 @@ pub fn load() -> Result<ArbiterLedger, LedgerError> {
     Ok(ledger)
 }
 
-/// Save the Arbiter ledger to disk atomically.
 pub fn save(ledger: &ArbiterLedger) -> Result<(), LedgerError> {
     let mut out = ArbiterLedger {
         version: ledger.version,
@@ -285,11 +311,7 @@ pub fn save(ledger: &ArbiterLedger) -> Result<(), LedgerError> {
     Ok(())
 }
 
-// ── Application ───────────────────────────────────────────────────────────────
 
-/// Apply the ledger configuration to the running engine.
-///
-/// Wires loaded decrees into the Atlas and spawns watchers for Wards.
 pub fn apply(
     ledger: &ArbiterLedger,
     atlas: &mut Atlas,

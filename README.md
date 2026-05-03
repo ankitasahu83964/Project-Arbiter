@@ -23,12 +23,12 @@ Arbiter is split into four seperated component crates to isolate scope.
 Handles all logical state, permissions, configurations, and signal observation. It provides data contracts but executes no instructions.
 * **Vigil**: Pluggable observation listeners for hotkeys and file monitoring.
 * **Atlas**: The Finite State Machine evaluation loop that maps triggers to sequences.
-* **Signet**: Secure configuration vault managing trusted paths and command whitelists. Protected by Windows DPAPI.
+* **Signet**: Secure configuration vault managing trusted paths and command whitelists. Protected by Windows DPAPI and serialized via MessagePack for binary hardening.
 * **Filter**: In-memory path lock state that prevents infinite event observation loops.
 
 ### 2. arbiter-bridge
 A single-responsibility hardware and file execution layer. It processes incoming logical directives through a global queuing lock.
-* **Runner**: Background orchestration task that manages sequential action execution. Hardened with a 5s Hibernation Guard.
+* **Runner**: Background orchestration task that manages sequential action execution. Hardened with a Hibernation Guard.
 * **Hardware Bridge**: Physical keyboard and mouse routing handler with coordinate bounds checks.
 * **Filesystem Bridge**: Secure file system IO manager handling localized file manipulation using `PathBuf` for cross-platform safety.
 * **Shell Bridge**: Hardened sub-process launching utility handling independent executions.
@@ -37,7 +37,7 @@ A single-responsibility hardware and file execution layer. It processes incoming
 Entrypoint wrapper managing lifecycle state, custom daily rolling loggers, Tokio asynchronous runtime initialization, and system-tray integration.
 
 ### 4. arbiter-forge
-Slint-based visual interface for monitoring live telemetry and managing engine state. It connects to the host via high-performance Named Pipe IPC.
+Slint-based visual interface for monitoring live telemetry and managing engine state. It connects to the host via a MessagePack binary IPC protocol.
 
 ## Safety and Fallbacks
 
@@ -136,5 +136,4 @@ MIT License
 ## Future Plans
 
 - Conditional logic in the Decree sequence editor (branching steps based on analytical ward data).
-- Integrated Telemetry: Moving from newline-delimited JSON to a more robust binary protocol for inter-process communication.
 - Enhanced Perception: Specialized analytical gates for deep-tissue file inspection (MIME, SHA-256).

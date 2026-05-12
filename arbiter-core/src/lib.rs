@@ -1,7 +1,7 @@
 pub mod atlas;
 pub mod decree;
-pub mod protocol;
 pub mod ledger;
+pub mod protocol;
 
 #[cfg(any(feature = "vigil-fs", feature = "vigil-keys"))]
 pub mod vigil;

@@ -1,8 +1,11 @@
 use std::{
     collections::HashMap,
     path::Path,
-    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
-    time::{Instant, Duration},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 fn normalize_key(path: impl AsRef<Path>) -> String {
@@ -48,7 +51,7 @@ impl ArbiterFilter {
             let now = Instant::now();
             let expiry = Duration::from_secs(3);
             map.retain(|_, &mut time| now.duration_since(time) < expiry);
-            
+
             map.contains_key(&key)
         } else {
             false

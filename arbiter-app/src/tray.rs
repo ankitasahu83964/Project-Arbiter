@@ -1,5 +1,5 @@
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use std::sync::{Arc, Mutex};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tracing::info;
 use tray_icon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -33,7 +33,9 @@ fn resolve_forge_path() -> std::path::PathBuf {
         .join("arbiter-forge.exe");
 
     if !term_path.exists() {
-        let dev_path = std::path::Path::new("target").join("debug").join("arbiter-forge.exe");
+        let dev_path = std::path::Path::new("target")
+            .join("debug")
+            .join("arbiter-forge.exe");
         if dev_path.exists() {
             term_path = dev_path;
         }
@@ -74,7 +76,7 @@ fn is_process_elevated() -> bool {
 
 fn build_tray() -> Result<(TrayIcon, MenuItem, TrayIcons), Box<dyn std::error::Error>> {
     // Embed the icon.ico from the data directory into the executable binary.
-    // This ensures that the tray icon is *always* available, regardless of 
+    // This ensures that the tray icon is *always* available, regardless of
     // the working directory (e.g. when launched via Windows Startup registry).
     let icon_idle_bytes = include_bytes!("../../arbiter-data/icon.ico");
     let icon_exec_bytes = include_bytes!("../../arbiter-data/icon_dot.ico");
@@ -102,7 +104,11 @@ fn build_tray() -> Result<(TrayIcon, MenuItem, TrayIcons), Box<dyn std::error::E
 
     let menu = Menu::new();
     let elevated = is_process_elevated();
-    let status_text = if elevated { "Arbiter (Elevated)" } else { "Arbiter (Standard)" };
+    let status_text = if elevated {
+        "Arbiter (Elevated)"
+    } else {
+        "Arbiter (Standard)"
+    };
     let status_item = MenuItem::with_id("status", status_text, false, None);
     let pause_item = MenuItem::with_id("pause", "Pause Engine", true, None);
     let reset_item = MenuItem::with_id("reset", "Reset Engine", true, None);
@@ -121,7 +127,11 @@ fn build_tray() -> Result<(TrayIcon, MenuItem, TrayIcons), Box<dyn std::error::E
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip(if elevated { "Arbiter — Standing By (Elevated)" } else { "Arbiter — Standing By" })
+        .with_tooltip(if elevated {
+            "Arbiter — Standing By (Elevated)"
+        } else {
+            "Arbiter — Standing By"
+        })
         .with_icon(icon_idle)
         .build()?;
 
@@ -137,7 +147,9 @@ fn build_fallback_icon() -> Result<tray_icon::Icon, Box<dyn std::error::Error>> 
     Ok(tray_icon::Icon::from_rgba(px, 16, 16)?)
 }
 
-pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoopProxy<TrayAppEvent>) + 'static) {
+pub fn run_event_loop(
+    on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoopProxy<TrayAppEvent>) + 'static,
+) {
     use tao::event::Event;
     use tray_icon::menu::MenuEvent;
 
@@ -191,7 +203,11 @@ pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoop
 
             if id == "pause" {
                 paused = !paused;
-                let label = if paused { "Resume Engine" } else { "Pause Engine" };
+                let label = if paused {
+                    "Resume Engine"
+                } else {
+                    "Pause Engine"
+                };
                 pause_item.set_text(label);
                 info!(paused, "Tray: Pause state toggled");
                 on_event(TrayAppEvent::SetPaused(paused), proxy.clone());
@@ -231,7 +247,11 @@ pub fn run_event_loop(on_event: impl Fn(TrayAppEvent, tao::event_loop::EventLoop
                 }
                 TrayAppEvent::SetPaused(is_paused) => {
                     paused = is_paused;
-                    let label = if paused { "Resume Engine" } else { "Pause Engine" };
+                    let label = if paused {
+                        "Resume Engine"
+                    } else {
+                        "Pause Engine"
+                    };
                     pause_item.set_text(label);
                 }
             }

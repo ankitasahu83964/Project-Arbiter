@@ -1,16 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use futures::{SinkExt, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc};
-use futures::{SinkExt, StreamExt};
 use tracing::info;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use arbiter_core::{
     atlas::Atlas,
-    filter::ArbiterFilter,
     decree::ExecData,
-    protocol::{LogEntry, ForgeCommand, PIPE_TELEMETRY, PIPE_COMMAND},
+    filter::ArbiterFilter,
+    protocol::{ForgeCommand, LogEntry, PIPE_COMMAND, PIPE_TELEMETRY},
 };
 
 mod tray;
@@ -21,7 +21,9 @@ struct ArbiterRollingWriter {
 
 impl ArbiterRollingWriter {
     fn new(dir: impl Into<std::path::PathBuf>) -> Self {
-        Self { base_dir: dir.into() }
+        Self {
+            base_dir: dir.into(),
+        }
     }
 }
 
@@ -52,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_dir = arbiter_core::signet::data_dir().join("logs");
     let file_appender = ArbiterRollingWriter::new(log_dir);
     let (non_blocking_file, _guard) = tracing_appender::non_blocking(file_appender);
-    
+
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(non_blocking_file)
         .with_ansi(false)
@@ -65,18 +67,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compact();
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,arbiter=debug")))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,arbiter=debug")),
+        )
         .with(file_layer)
         .with(stdout_layer)
         .init();
 
-    println!(r#"
+    println!(
+        r#"
     █▀▀█ █▀▀█ █▀▀█ ▀█▀ ▀▀█▀▀ █▀▀ █▀▀█
     █▄▄█ █▄▄▀ █▀▀▄  █    █   █▀▀ █▄▄▀
     ▀  ▀ ▀ ▀▀ ▀▀▀▀ ▀▀▀   ▀   ▀▀▀ ▀ ▀▀
     Deterministic System Orchestration
     
-    "#);
+    "#
+    );
     info!("Arbiter Engine: booting version 2.0.0");
 
     let filter = ArbiterFilter::new();
@@ -85,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (presence_tx, mut presence_rx) = mpsc::channel(100);
     let (run_event_tx, mut run_event_rx) = mpsc::channel(100);
     let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel(100);
-    
+
     let (atlas_shutdown_tx, mut atlas_shutdown_rx) = tokio::sync::oneshot::channel();
     let (atlas_exec_tx, mut atlas_exec_rx) = mpsc::channel::<ExecData>(100);
     let (reset_tx, mut reset_rx) = mpsc::channel::<()>(1);
@@ -95,21 +102,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ipc_broadcast = log_broadcast_tx.clone();
     tokio::spawn(async move {
         use tokio::net::windows::named_pipe::ServerOptions;
-        
+
         loop {
             let server = ServerOptions::new()
                 .first_pipe_instance(true)
                 .create(PIPE_TELEMETRY)
                 .or_else(|_| ServerOptions::new().create(PIPE_TELEMETRY));
-            
+
             if let Ok(server) = server {
                 if server.connect().await.is_ok() {
                     let mut rx = ipc_broadcast.subscribe();
                     let (_, writer) = tokio::io::split(server);
-                    let mut framed = tokio_util::codec::FramedWrite::new(writer, tokio_util::codec::LengthDelimitedCodec::new());
+                    let mut framed = tokio_util::codec::FramedWrite::new(
+                        writer,
+                        tokio_util::codec::LengthDelimitedCodec::new(),
+                    );
                     while let Ok(entry) = rx.recv().await {
                         if let Ok(bin) = rmp_serde::to_vec(&entry) {
-                            if framed.send(bytes::Bytes::from(bin)).await.is_err() { break; }
+                            if framed.send(bytes::Bytes::from(bin)).await.is_err() {
+                                break;
+                            }
                         }
                     }
                 }
@@ -132,7 +144,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(server) = server {
                 if server.connect().await.is_ok() {
                     let (reader, _) = tokio::io::split(server);
-                    let mut framed = tokio_util::codec::FramedRead::new(reader, tokio_util::codec::LengthDelimitedCodec::new());
+                    let mut framed = tokio_util::codec::FramedRead::new(
+                        reader,
+                        tokio_util::codec::LengthDelimitedCodec::new(),
+                    );
                     while let Some(res) = framed.next().await {
                         if let Ok(bytes) = res {
                             match rmp_serde::from_slice::<ForgeCommand>(&bytes) {
@@ -177,13 +192,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (screen_width, screen_height) = {
         #[cfg(windows)]
         {
-            use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+            };
             unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
         }
         #[cfg(not(windows))]
-        { (1920, 1080) }
+        {
+            (1920, 1080)
+        }
     };
-    info!("Runner: mapping display boundaries to {}x{}", screen_width, screen_height);
+    info!(
+        "Runner: mapping display boundaries to {}x{}",
+        screen_width, screen_height
+    );
     arbiter_bridge::runner::spawn(exec_cmd_rx, screen_width, screen_height, filter.clone());
 
     // Signet config is loaded fresh on every execution via signet::load().
@@ -227,19 +249,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let atlas_vigil_tx = vigil_tx.clone();
     let atlas_filter = filter.clone();
     tokio::spawn(async move {
-        atlas.run(
-            &mut vigil_rx,
-            atlas_vigil_tx,
-            #[cfg(feature = "presence")] &mut presence_rx,
-            #[cfg(not(feature = "presence"))] &mut tokio::sync::mpsc::channel(1).1,
-            &mut run_event_rx,
-            atlas_exec_tx.clone(),
-            &mut reset_rx,
-            &mut forge_cmd_rx,
-            &mut atlas_shutdown_rx,
-            atlas_loop_broadcast.clone(),
-            atlas_filter,
-        ).await;
+        atlas
+            .run(
+                &mut vigil_rx,
+                atlas_vigil_tx,
+                #[cfg(feature = "presence")]
+                &mut presence_rx,
+                #[cfg(not(feature = "presence"))]
+                &mut tokio::sync::mpsc::channel(1).1,
+                &mut run_event_rx,
+                atlas_exec_tx.clone(),
+                &mut reset_rx,
+                &mut forge_cmd_rx,
+                &mut atlas_shutdown_rx,
+                atlas_loop_broadcast.clone(),
+                atlas_filter,
+            )
+            .await;
         info!("Atlas: run loop terminated cleanly");
     });
 
@@ -253,11 +279,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match event {
             tray::TrayAppEvent::Shutdown => {
                 if let Ok(mut cell) = shutdown_cell.lock() {
-                    if let Some(tx) = cell.take() { let _ = tx.send(()); }
+                    if let Some(tx) = cell.take() {
+                        let _ = tx.send(());
+                    }
                 }
             }
             tray::TrayAppEvent::Reset => {
-                if let Ok(cell) = reset_cell.lock() { let _ = cell.try_send(()); }
+                if let Ok(cell) = reset_cell.lock() {
+                    let _ = cell.try_send(());
+                }
             }
             tray::TrayAppEvent::SetPaused(paused) => {
                 if let Ok(mut p) = paused_cell.lock() {
@@ -280,23 +310,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match entry.tag.as_str() {
                         "ATLAS" => {
                             if entry.message.contains("Engine paused") {
-                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate("Paused".into()));
+                                let _ = proxy_atlas
+                                    .send_event(tray::TrayAppEvent::StatusUpdate("Paused".into()));
                                 continue;
                             }
                             if entry.message.contains("Engine resumed") {
-                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate("Standing By".into()));
+                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
+                                    "Standing By".into(),
+                                ));
                                 continue;
                             }
                             if entry.message.contains("matched") {
                                 if let Some(id) = entry.decree_id {
-                                    let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(format!("Executing: {}", id)));
+                                    let _ =
+                                        proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
+                                            format!("Executing: {}", id),
+                                        ));
                                 }
                             } else if entry.message.contains("complete") {
-                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate("Standing By".into()));
+                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
+                                    "Standing By".into(),
+                                ));
                             }
                         }
                         "PRESN" => {
-                            let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate("Yielded".into()));
+                            let _ = proxy_atlas
+                                .send_event(tray::TrayAppEvent::StatusUpdate("Yielded".into()));
                         }
                         _ => {}
                     }

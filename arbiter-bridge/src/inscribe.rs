@@ -4,7 +4,6 @@ use walkdir::WalkDir;
 
 use globset::{Glob, GlobMatcher};
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum InscribeError {
     #[error("Inscribe: path '{0}' is not in a trusted directory")]
@@ -17,7 +16,7 @@ pub enum InscribeError {
 
 fn assert_trusted(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(), InscribeError> {
     let path = path.as_ref();
-    
+
     let canonical_path = if path.exists() {
         std::fs::canonicalize(path)?
     } else if let Some(parent) = path.parent() {
@@ -30,23 +29,19 @@ fn assert_trusted(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<()
         path.to_path_buf()
     };
 
-    if trusted_roots
-        .iter()
-        .any(|root| {
-            if let Ok(canon_root) = std::fs::canonicalize(root) {
-                canonical_path.starts_with(canon_root)
-            } else {
-                canonical_path.to_string_lossy().starts_with(root)
-            }
-        })
-    {
+    if trusted_roots.iter().any(|root| {
+        if let Ok(canon_root) = std::fs::canonicalize(root) {
+            canonical_path.starts_with(canon_root)
+        } else {
+            canonical_path.to_string_lossy().starts_with(root)
+        }
+    }) {
         return Ok(());
     }
     let path_str = canonical_path.to_string_lossy().to_string();
     warn!(%path_str, "Inscribe: Conservatory rejected path (Traversal or Untrusted)");
     Err(InscribeError::NotTrusted(path_str))
 }
-
 
 async fn retry_with_backoff<F, Fut, T>(mut action: F) -> std::io::Result<T>
 where
@@ -73,10 +68,11 @@ where
 
 fn ensure_file_path(src: &Path, dst: &Path) -> PathBuf {
     let mut final_dst = dst.to_path_buf();
-    
+
     // Check if dst is a directory or intended to be one (ends with slash)
-    let is_dir_intent = dst.to_string_lossy().ends_with('/') || dst.to_string_lossy().ends_with('\\');
-    
+    let is_dir_intent =
+        dst.to_string_lossy().ends_with('/') || dst.to_string_lossy().ends_with('\\');
+
     if dst.is_dir() || is_dir_intent {
         if let Some(filename) = src.file_name() {
             final_dst = final_dst.join(filename);
@@ -85,10 +81,14 @@ fn ensure_file_path(src: &Path, dst: &Path) -> PathBuf {
     final_dst
 }
 
-pub async fn move_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roots: &[String]) -> Result<PathBuf, InscribeError> {
+pub async fn move_file(
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+    trusted_roots: &[String],
+) -> Result<PathBuf, InscribeError> {
     let src = src.as_ref();
     let dst_raw = dst.as_ref();
-    
+
     if !src.exists() {
         return Err(InscribeError::SourceNotFound(src.display().to_string()));
     }
@@ -106,13 +106,18 @@ pub async fn move_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roo
             tokio::fs::remove_file(src).await?;
         }
         Ok(())
-    }).await?;
+    })
+    .await?;
 
     info!(src = %src.display(), dst = %dst.display(), "Inscribe: file moved");
     Ok(dst)
 }
 
-pub async fn copy_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(PathBuf, u64), InscribeError> {
+pub async fn copy_file(
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+    trusted_roots: &[String],
+) -> Result<(PathBuf, u64), InscribeError> {
     let src = src.as_ref();
     let dst_raw = dst.as_ref();
 
@@ -132,7 +137,10 @@ pub async fn copy_file(src: impl AsRef<Path>, dst: impl AsRef<Path>, trusted_roo
     Ok((dst, bytes))
 }
 
-pub async fn delete_file(path: impl AsRef<Path>, trusted_roots: &[String]) -> Result<(), InscribeError> {
+pub async fn delete_file(
+    path: impl AsRef<Path>,
+    trusted_roots: &[String],
+) -> Result<(), InscribeError> {
     let path = path.as_ref();
     assert_trusted(path, trusted_roots)?;
 
@@ -144,7 +152,6 @@ pub async fn delete_file(path: impl AsRef<Path>, trusted_roots: &[String]) -> Re
     info!(path = %path.display(), "Inscribe: file deleted");
     Ok(())
 }
-
 
 #[derive(Debug)]
 pub struct DryRunReport {
@@ -168,7 +175,7 @@ pub fn dry_run_walk(root: &Path, pattern: &str) -> DryRunReport {
     for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             let name = entry.file_name().to_string_lossy();
-            
+
             let matched = if let Some(ref m) = matcher {
                 m.is_match(&*name)
             } else {

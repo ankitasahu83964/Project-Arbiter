@@ -1,9 +1,6 @@
-use enigo::{
-    Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings,
-};
-use tracing::{debug, warn};
 use arbiter_core::decree::{Action, ActionType};
-
+use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
+use tracing::{debug, warn};
 
 pub struct HardwareBridge {
     enigo: Enigo,
@@ -56,18 +53,21 @@ impl HardwareBridge {
                     for c in text.chars() {
                         match c {
                             '\n' => {
-                                self.enigo.key(enigo::Key::Return, Direction::Click)
+                                self.enigo
+                                    .key(enigo::Key::Return, Direction::Click)
                                     .map_err(|e| format!("Hand: newline failed: {e:?}"))?;
                             }
                             '\r' => { /* skip carriage returns */ }
                             '\t' => {
-                                self.enigo.key(enigo::Key::Tab, Direction::Click)
+                                self.enigo
+                                    .key(enigo::Key::Tab, Direction::Click)
                                     .map_err(|e| format!("Hand: tab failed: {e:?}"))?;
                             }
                             _ => {
                                 let s = c.to_string();
-                                self.enigo.text(&s)
-                                    .map_err(|e| format!("Hand: char type failed ('{c}'): {e:?}"))?;
+                                self.enigo.text(&s).map_err(|e| {
+                                    format!("Hand: char type failed ('{c}'): {e:?}")
+                                })?;
                             }
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
@@ -130,8 +130,7 @@ impl HardwareBridge {
 
                 debug!(%keys, "Hand: navigation executed");
             }
-            ActionType::Wait(_) => {
-            }
+            ActionType::Wait(_) => {}
             // File & Shell actions are handled directly by the Runner, not Hand.
             other => {
                 warn!(action = ?other, "Hand received a non-synthetic action — ignoring");
@@ -141,7 +140,6 @@ impl HardwareBridge {
         Ok(())
     }
 
-    
     fn validate_coordinate(&self, x: i32, y: i32) -> Result<(), String> {
         if x < 0 || x > self.screen_width || y < 0 || y > self.screen_height {
             let msg = format!(

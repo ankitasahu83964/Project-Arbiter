@@ -4,11 +4,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
 use globset::{Glob, GlobMatcher};
 use lazy_static::lazy_static;
-
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArbiterConfig {
@@ -43,10 +42,8 @@ impl Default for ArbiterConfig {
 
 lazy_static! {
     static ref CONFIG_CACHE: Arc<RwLock<Option<ArbiterConfig>>> = Arc::new(RwLock::new(None));
-
     static ref GLOB_CACHE: Arc<RwLock<Vec<GlobMatcher>>> = Arc::new(RwLock::new(Vec::new()));
 }
-
 
 // Using current_exe() means the data directory is always found next to the binary.
 pub fn data_dir() -> PathBuf {
@@ -54,7 +51,12 @@ pub fn data_dir() -> PathBuf {
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         let p = PathBuf::from(manifest);
         // If we are in a crate directory, look for arbiter-data in the parent (workspace root)
-        if p.ends_with("arbiter-core") || p.ends_with("arbiter-app") || p.ends_with("arbiter-forge") || p.ends_with("arbiter-bridge") || p.ends_with("arbiter-inquisitor") {
+        if p.ends_with("arbiter-core")
+            || p.ends_with("arbiter-app")
+            || p.ends_with("arbiter-forge")
+            || p.ends_with("arbiter-bridge")
+            || p.ends_with("arbiter-inquisitor")
+        {
             if let Some(root) = p.parent() {
                 let data = root.join("arbiter-data");
                 if data.exists() {
@@ -74,10 +76,14 @@ pub fn data_dir() -> PathBuf {
             let mut current = Some(parent);
             while let Some(p) = current {
                 let data = p.join("arbiter-data");
-                if data.exists() { return data; }
+                if data.exists() {
+                    return data;
+                }
                 current = p.parent();
                 // Stop at drive root
-                if p.to_string_lossy().len() <= 3 { break; }
+                if p.to_string_lossy().len() <= 3 {
+                    break;
+                }
             }
         }
     }
@@ -86,12 +92,13 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from("arbiter-data")
 }
 
-
 #[cfg(windows)]
 fn protect_data(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN};
-    use windows::Win32::Foundation::LocalFree;
     use std::ptr;
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
 
     let data_in = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
@@ -111,7 +118,8 @@ fn protect_data(data: &[u8]) -> Result<Vec<u8>, String> {
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
             &mut data_out,
-        ).map_err(|e| format!("DPAPI Protect failed: {}", e))?;
+        )
+        .map_err(|e| format!("DPAPI Protect failed: {}", e))?;
 
         let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
         let vec = slice.to_vec();
@@ -122,9 +130,11 @@ fn protect_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(windows)]
 fn unprotect_data(data: &[u8]) -> Result<Vec<u8>, String> {
-    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN};
-    use windows::Win32::Foundation::LocalFree;
     use std::ptr;
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::Security::Cryptography::{
+        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
 
     let data_in = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
@@ -144,7 +154,8 @@ fn unprotect_data(data: &[u8]) -> Result<Vec<u8>, String> {
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
             &mut data_out,
-        ).map_err(|e| format!("DPAPI Unprotect failed: {}", e))?;
+        )
+        .map_err(|e| format!("DPAPI Unprotect failed: {}", e))?;
 
         let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
         let vec = slice.to_vec();
@@ -163,7 +174,6 @@ fn unprotect_data(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(data.to_vec())
 }
 
-
 pub fn load() -> Result<ArbiterConfig, String> {
     // Check cache first
     if let Ok(cache) = CONFIG_CACHE.read() {
@@ -181,7 +191,7 @@ pub fn load() -> Result<ArbiterConfig, String> {
     }
 
     let bytes = std::fs::read(&path).map_err(|e| format!("Signet: failed to read vault: {e}"))?;
-    
+
     // DPAPI decrypt (or passthrough on non-windows)
     let dec_bytes = unprotect_data(&bytes)?;
 
@@ -200,10 +210,12 @@ pub fn load() -> Result<ArbiterConfig, String> {
 pub fn save(config: &ArbiterConfig) -> Result<(), String> {
     let path = data_dir().join("arbiter.vault");
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Signet: failed to create data directory: {e}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Signet: failed to create data directory: {e}"))?;
     }
 
-    let bytes = rmp_serde::to_vec(config).map_err(|e| format!("Signet: failed to serialize config: {e}"))?;
+    let bytes = rmp_serde::to_vec(config)
+        .map_err(|e| format!("Signet: failed to serialize config: {e}"))?;
     let enc_bytes = protect_data(&bytes)?;
     std::fs::write(path, enc_bytes).map_err(|e| format!("Signet: failed to write vault: {e}"))?;
 
@@ -232,7 +244,6 @@ fn rebuild_glob_cache(config: &ArbiterConfig) {
     let _ = GLOB_CACHE.write().map(|mut g| *g = matchers);
 }
 
-
 fn secure_canonicalize(path: &Path) -> PathBuf {
     if path.exists() {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -249,7 +260,8 @@ fn path_matches_rules(path: &Path, rules: &HashSet<String>) -> bool {
 
     for rule in rules {
         // 1. Try exact/prefix match (canonicalized)
-        let canon_rule = std::fs::canonicalize(rule).unwrap_or_else(|_| Path::new(rule).to_path_buf());
+        let canon_rule =
+            std::fs::canonicalize(rule).unwrap_or_else(|_| Path::new(rule).to_path_buf());
         if canon_path.starts_with(&canon_rule) {
             return true;
         }
@@ -296,14 +308,13 @@ pub fn is_path_restricted(config: &ArbiterConfig, path: impl AsRef<Path>) -> boo
     false
 }
 
-
 pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         use windows::core::HSTRING;
         use windows::Win32::System::Registry::{
             RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY_CURRENT_USER,
-            REG_SZ, KEY_WRITE, REG_OPTION_NON_VOLATILE,
+            KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
         };
 
         let sub_key = HSTRING::from("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -331,7 +342,7 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
         let result = if enabled {
             let exe_path = std::env::current_exe()
                 .map_err(|e| format!("Signet: failed to get current exe path: {e}"))?;
-            
+
             // On Windows, current_exe might be arbiter-forge.exe if we're in the UI,
             // but we want arbiter.exe (the background service) to start.
             // If the current exe is arbiter-forge.exe, we look for arbiter.exe in the same dir.
@@ -344,7 +355,7 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
 
             let path_str = startup_path.to_string_lossy();
             let path_hstring = HSTRING::from(path_str.as_ref());
-            
+
             info!(path = %path_str, "Signet: registering Arbiter for startup");
             unsafe {
                 RegSetValueExW(
@@ -363,9 +374,12 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
             unsafe { RegDeleteValueW(hkey, &value_name) }
         };
 
-        unsafe { let _ = RegCloseKey(hkey); }
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        }
 
-        if result.is_err() && result.0 != 2 { // 2 = ERROR_FILE_NOT_FOUND, which is fine when deleting
+        if result.is_err() && result.0 != 2 {
+            // 2 = ERROR_FILE_NOT_FOUND, which is fine when deleting
             return Err(format!("Signet: registry operation failed: {:?}", result));
         }
         Ok(())

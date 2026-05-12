@@ -2,7 +2,6 @@
 // Every command must pass The Baton toggle before it runs, basically an explicit user allowance.
 use tracing::{info, warn};
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
     #[error("The Baton: '{0}' is not allowed — grant it in the Signet first")]
@@ -12,7 +11,6 @@ pub enum ShellError {
     #[error("Shell: exit {status} — {stderr}")]
     NonZeroExit { status: i32, stderr: String },
 }
-
 
 #[derive(Debug)]
 pub struct ShellOutput {

@@ -635,7 +635,8 @@ pub enum RunEvent {
     /// Sequence completed normally.
     Done,
 }
-///Contains runtime execution state passed into the orchestration engine.
+
+/// Contains runtime execution state passed into the orchestration engine.
 pub struct ExecData {
     pub nodes: Vec<DecreeNode>,
     pub context: EnvContext,

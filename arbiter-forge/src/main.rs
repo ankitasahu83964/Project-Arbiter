@@ -2,14 +2,18 @@
 
 slint::include_modules!();
 
+use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::rc::Rc;
 use std::time::Duration;
-use slint::{ComponentHandle, Model, ModelRc, VecModel, Color, SharedString};
 use tracing::info;
 
-use arbiter_core::protocol::{ForgeCommand, LogEntry as WireLogEntry, PIPE_COMMAND, PIPE_TELEMETRY};
-use arbiter_core::decree::{DecreeId, NodeId, NodeKind, DecreeNode, Action, ActionType, PresenceConfig};
+use arbiter_core::decree::{
+    Action, ActionType, DecreeId, DecreeNode, NodeId, NodeKind, PresenceConfig,
+};
 use arbiter_core::ledger::SummonsDef;
+use arbiter_core::protocol::{
+    ForgeCommand, LogEntry as WireLogEntry, PIPE_COMMAND, PIPE_TELEMETRY,
+};
 
 thread_local! {
     static LOG_MODEL:    Rc<VecModel<LogEntry>>    = Rc::new(VecModel::default());
@@ -24,7 +28,8 @@ fn generate_decree_id(label: &str) -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     static CTR: AtomicU32 = AtomicU32::new(1);
 
-    let slug: String = label.to_lowercase()
+    let slug: String = label
+        .to_lowercase()
         .chars()
         .map(|c| if c.is_whitespace() { '-' } else { c })
         .filter(|&c| c.is_alphanumeric() || c == '-')
@@ -49,21 +54,21 @@ fn generate_step_id() -> String {
     format!("step-{}-{}", epoch, n)
 }
 
-
 async fn send_command(cmd: &ForgeCommand) {
     use tokio::net::windows::named_pipe::ClientOptions;
-    
+
     let result = async {
+        use futures::SinkExt;
         use tokio_util::codec::FramedWrite;
         use tokio_util::codec::LengthDelimitedCodec;
-        use futures::SinkExt;
 
         let client = ClientOptions::new().open(PIPE_COMMAND)?;
         let mut framed = FramedWrite::new(client, LengthDelimitedCodec::new());
         let bin = rmp_serde::to_vec(cmd).map_err(std::io::Error::other)?;
         framed.send(bytes::Bytes::from(bin)).await?;
         Ok::<(), std::io::Error>(())
-    }.await;
+    }
+    .await;
 
     if let Err(e) = result {
         tracing::error!(%e, "Forge: IPC send failed");
@@ -120,13 +125,13 @@ async fn app_is_available(wait_for: Duration) -> bool {
 fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef {
     let label = ui.get_active_decree_label().to_string();
     let id_str = ui.get_active_decree_id().to_string();
-    
+
     let id = if id_str.is_empty() {
         DecreeId(generate_decree_id(&label))
     } else {
         DecreeId(id_str)
     };
-    
+
     let _trigger_type = ui.get_summons_trigger_type();
     let summons = match ui.get_summons_trigger_type() {
         0 => SummonsDef::FileCreated {
@@ -142,7 +147,6 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
         },
         _ => SummonsDef::Manual,
     };
-
 
     let mut nodes = Vec::new();
     nodes.push(DecreeNode {
@@ -168,10 +172,14 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
                                 destination: step.arg_b.to_string().into(),
                             }
                         }
-                    },
+                    }
                     1 => ActionType::Shell {
                         command: step.arg_a.to_string(),
-                        args: step.arg_b.split_whitespace().map(|s| s.to_string()).collect(),
+                        args: step
+                            .arg_b
+                            .split_whitespace()
+                            .map(|s| s.to_string())
+                            .collect(),
                         detached: true,
                     },
                     2 => ActionType::Type(step.arg_a.to_string()),
@@ -190,7 +198,9 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
                 let next_id = if i + 1 < m.row_count() {
                     if let Some(next_step) = m.row_data(i + 1) {
                         Some(NodeId(next_step.id.to_string()))
-                    } else { None }
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
@@ -203,10 +213,10 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
                 nodes.push(DecreeNode {
                     id: step_id,
                     label: step.title.to_string(),
-                    state: arbiter_core::decree::NodeState::Action { 
-                        action_type: action.action_type, 
-                        point: action.point, 
-                        delay_ms: action.delay_ms 
+                    state: arbiter_core::decree::NodeState::Action {
+                        action_type: action.action_type,
+                        point: action.point,
+                        delay_ms: action.delay_ms,
                     },
                     next_nodes,
                 });
@@ -250,13 +260,12 @@ fn next_new_decree_label() -> String {
     format!("New Decree {}", max_n + 1)
 }
 
-
 fn sync_ledger_to_ui() {
     let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
         tracing::error!("Forge: Failed to load ledger: {}", e);
         arbiter_core::ledger::ArbiterLedger::default()
     });
-    
+
     DECREE_MODEL.with(|m| {
         let mut model_indices = std::collections::HashMap::new();
         for i in 0..m.row_count() {
@@ -333,18 +342,22 @@ fn sync_ledger_to_ui() {
 
 fn sync_signet_to_ui(ui: &ArbiterForge) {
     let signet = arbiter_core::signet::load().unwrap_or_default();
-    
+
     ui.set_launch_on_startup(signet.launch_on_startup);
 
     TS_PATH_MODEL.with(|m| {
-        while m.row_count() > 0 { m.remove(0); }
+        while m.row_count() > 0 {
+            m.remove(0);
+        }
         for p in &signet.trusted_paths {
             m.push(SharedString::from(p));
         }
     });
-    
+
     BATON_MODEL.with(|m| {
-        while m.row_count() > 0 { m.remove(0); }
+        while m.row_count() > 0 {
+            m.remove(0);
+        }
         for b in &signet.baton_allowed {
             m.push(SharedString::from(b));
         }
@@ -369,12 +382,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = ArbiterForge::new()?;
     let ui_handle = ui.as_weak();
 
-    let log_model     = LOG_MODEL.with(|m| m.clone());
-    let decree_model  = DECREE_MODEL.with(|m| m.clone());
-    let step_model    = STEP_MODEL.with(|m| m.clone());
-    let ward_model    = WARD_MODEL.with(|m| m.clone());
+    let log_model = LOG_MODEL.with(|m| m.clone());
+    let decree_model = DECREE_MODEL.with(|m| m.clone());
+    let step_model = STEP_MODEL.with(|m| m.clone());
+    let ward_model = WARD_MODEL.with(|m| m.clone());
     let ts_path_model = TS_PATH_MODEL.with(|m| m.clone());
-    let baton_model   = BATON_MODEL.with(|m| m.clone());
+    let baton_model = BATON_MODEL.with(|m| m.clone());
 
     ui.set_telemetry_logs(ModelRc::from(log_model.clone()));
     ui.set_decree_list(ModelRc::from(decree_model.clone()));
@@ -407,103 +420,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui_handle_telemetry = ui_handle.clone();
     tokio::spawn(async move {
-        use tokio::net::windows::named_pipe::ClientOptions;
-        use tokio_util::codec::FramedRead;
         use futures::StreamExt;
+        use tokio::net::windows::named_pipe::ClientOptions;
         use tokio::time::timeout;
+        use tokio_util::codec::FramedRead;
 
         let watchdog_duration = Duration::from_secs(2);
 
         loop {
             let client = match ClientOptions::new().open(PIPE_TELEMETRY) {
-                Ok(c)  => c,
+                Ok(c) => c,
                 Err(_) => {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
             };
 
-            let mut framed = FramedRead::new(client, tokio_util::codec::LengthDelimitedCodec::new());
+            let mut framed =
+                FramedRead::new(client, tokio_util::codec::LengthDelimitedCodec::new());
 
             loop {
                 match timeout(watchdog_duration, framed.next()).await {
-                    Ok(Some(Ok(bytes))) => {
-                        match rmp_serde::from_slice::<WireLogEntry>(&bytes) {
-                            Ok(core_entry) => {
-                                if core_entry.tag == "VIGIL" && core_entry.message.contains("Heartbeat") {
-                                    continue;
+                    Ok(Some(Ok(bytes))) => match rmp_serde::from_slice::<WireLogEntry>(&bytes) {
+                        Ok(core_entry) => {
+                            if core_entry.tag == "VIGIL" && core_entry.message.contains("Heartbeat")
+                            {
+                                continue;
+                            }
+
+                            let ui_copy = ui_handle_telemetry.clone();
+
+                            let tag_color = match core_entry.tag.as_str() {
+                                "VIGIL" | "Vigil-fs" | "Vigil-keys" => {
+                                    Color::from_rgb_u8(99, 102, 241)
                                 }
+                                "ATLAS" | "Atlas" => Color::from_rgb_u8(245, 158, 11),
+                                "RUNNER" | "Runner" => Color::from_rgb_u8(16, 185, 129),
+                                "BATON" | "Baton" => Color::from_rgb_u8(244, 63, 94),
+                                "ERROR" => Color::from_rgb_u8(244, 63, 94),
+                                "WARN" => Color::from_rgb_u8(245, 158, 11),
+                                _ => Color::from_rgb_u8(161, 161, 170),
+                            };
 
-                                let ui_copy = ui_handle_telemetry.clone();
+                            let time_str = if core_entry.time.is_empty() {
+                                chrono::Local::now().format("%H:%M:%S").to_string()
+                            } else if let Ok(dt) =
+                                chrono::DateTime::parse_from_rfc3339(&core_entry.time)
+                            {
+                                dt.with_timezone(&chrono::Local)
+                                    .format("%H:%M:%S")
+                                    .to_string()
+                            } else {
+                                core_entry.time.clone()
+                            };
 
-                                let tag_color = match core_entry.tag.as_str() {
-                                    "VIGIL" | "Vigil-fs" | "Vigil-keys" => Color::from_rgb_u8(99, 102, 241),
-                                    "ATLAS" | "Atlas"                    => Color::from_rgb_u8(245, 158, 11),
-                                    "RUNNER" | "Runner"                  => Color::from_rgb_u8(16, 185, 129),
-                                    "BATON" | "Baton"                    => Color::from_rgb_u8(244, 63, 94),
-                                    "ERROR"                              => Color::from_rgb_u8(244, 63, 94),
-                                    "WARN"                               => Color::from_rgb_u8(245, 158, 11),
-                                    _                                    => Color::from_rgb_u8(161, 161, 170),
-                                };
-
-                                let time_str = if core_entry.time.is_empty() {
-                                    chrono::Local::now().format("%H:%M:%S").to_string()
-                                } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&core_entry.time) {
-                                    dt.with_timezone(&chrono::Local).format("%H:%M:%S").to_string()
-                                } else {
-                                    core_entry.time.clone()
-                                };
-
-                                let is_runner = core_entry.tag == "RUNNER" || core_entry.tag == "Runner";
-                                let is_done = is_runner && (
-                                    core_entry.message.contains("complete")
+                            let is_runner =
+                                core_entry.tag == "RUNNER" || core_entry.tag == "Runner";
+                            let is_done = is_runner
+                                && (core_entry.message.contains("complete")
                                     || core_entry.message.contains("finished")
                                     || core_entry.message.contains("error")
-                                    || core_entry.message.contains("aborted")
-                                );
+                                    || core_entry.message.contains("aborted"));
 
-                                let should_sync = core_entry.tag == "ATLAS" && (
-                                    core_entry.message.contains("registered and saved")
-                                    || core_entry.message.contains("removed and saved")
-                                );
-                                let should_sync_signet = core_entry.tag == "VIGIL"
-                                    && core_entry.message.contains("Conservatory Wards updated");
+                            let should_sync = core_entry.tag == "ATLAS"
+                                && (core_entry.message.contains("registered and saved")
+                                    || core_entry.message.contains("removed and saved"));
+                            let should_sync_signet = core_entry.tag == "VIGIL"
+                                && core_entry.message.contains("Conservatory Wards updated");
 
-                                let entry = LogEntry {
-                                    time:      time_str.into(),
-                                    tag:       core_entry.tag.into(),
-                                    msg:       core_entry.message.into(),
-                                    tag_color,
-                                    decree_id: core_entry.decree_id.unwrap_or_default().into(),
-                                };
+                            let entry = LogEntry {
+                                time: time_str.into(),
+                                tag: core_entry.tag.into(),
+                                msg: core_entry.message.into(),
+                                tag_color,
+                                decree_id: core_entry.decree_id.unwrap_or_default().into(),
+                            };
 
-                                let _ = ui_copy.upgrade_in_event_loop(move |ui| {
-                                    LOG_MODEL.with(|m| {
-                                        m.push(entry);
-                                        if m.row_count() > 50 {
-                                            m.remove(0);
-                                        }
-                                    });
-                                    if should_sync {
-                                        sync_ledger_to_ui();
+                            let _ = ui_copy.upgrade_in_event_loop(move |ui| {
+                                LOG_MODEL.with(|m| {
+                                    m.push(entry);
+                                    if m.row_count() > 50 {
+                                        m.remove(0);
                                     }
-                                    if should_sync_signet {
-                                        sync_signet_to_ui(&ui);
-                                    }
-                                    if is_runner {
-                                        ui.set_engine_running(!is_done);
-                                    }
-                                    ui.invoke_scroll_logs_to_bottom();
                                 });
-                            }
-                            Err(e) => {
-                                tracing::error!("Forge: failed to parse telemetry MessagePack: {}", e);
-                            }
+                                if should_sync {
+                                    sync_ledger_to_ui();
+                                }
+                                if should_sync_signet {
+                                    sync_signet_to_ui(&ui);
+                                }
+                                if is_runner {
+                                    ui.set_engine_running(!is_done);
+                                }
+                                ui.invoke_scroll_logs_to_bottom();
+                            });
                         }
-                    }
+                        Err(e) => {
+                            tracing::error!("Forge: failed to parse telemetry MessagePack: {}", e);
+                        }
+                    },
                     Ok(Some(Err(e))) => {
                         tracing::error!("Forge: telemetry pipe error: {}", e);
-                        break; 
+                        break;
                     }
                     Ok(None) => {
                         tracing::warn!("Forge: telemetry pipe closed by engine.");
@@ -533,7 +551,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_handle.upgrade() {
                 let def = collect_decree_from_ui(&ui);
                 ui.set_active_decree_id(def.id.0.clone().into());
-                
+
                 if let Err(e) = def.validate() {
                     tracing::error!("Forge: Validation failed for decree: {}", e);
                     return;
@@ -544,7 +562,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     arbiter_core::ledger::ArbiterLedger::default()
                 });
 
-                if let arbiter_core::ledger::SummonsDef::FileCreated { ward_id, recursive, .. } = &def.summons {
+                if let arbiter_core::ledger::SummonsDef::FileCreated {
+                    ward_id, recursive, ..
+                } = &def.summons
+                {
                     let mut found = false;
                     for ward in &mut ledger.wards {
                         if ward.id == *ward_id {
@@ -604,13 +625,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let key = match &def.summons {
-                    SummonsDef::FileCreated { ward_id, pattern, .. } => format!("FileCreated|{}|{}", ward_id, pattern),
+                    SummonsDef::FileCreated {
+                        ward_id, pattern, ..
+                    } => format!("FileCreated|{}|{}", ward_id, pattern),
                     SummonsDef::Hotkey { combo } => format!("Hotkey|{}", combo),
                     SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{}", name),
                     SummonsDef::Manual => "Manual".to_string(),
                 };
                 let save_cmd = ForgeCommand::SaveDecree(def);
-                let run_cmd = ForgeCommand::ManualRun { summons_key: key, dry_run: true };
+                let run_cmd = ForgeCommand::ManualRun {
+                    summons_key: key,
+                    dry_run: true,
+                };
                 tokio::spawn(async move {
                     send_command(&save_cmd).await;
                     send_command(&run_cmd).await;
@@ -621,15 +647,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_new_decree({
         let decree_model = decree_model.clone();
-        let step_model   = step_model.clone();
-        let ui_handle    = ui_handle.clone();
+        let step_model = step_model.clone();
+        let ui_handle = ui_handle.clone();
         move || {
             let label = next_new_decree_label();
             let id = generate_decree_id(&label);
             info!(new_id = %id, "Forge: new-decree");
             decree_model.push(DecreeEntry {
-                id:     id.clone().into(),
-                label:  label.clone().into(),
+                id: id.clone().into(),
+                label: label.clone().into(),
                 status: 0,
             });
             while step_model.row_count() > 0 {
@@ -652,15 +678,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_select_decree({
-        let ui_handle    = ui_handle.clone();
+        let ui_handle = ui_handle.clone();
         move |id| {
-            if id.is_empty() { return; }
+            if id.is_empty() {
+                return;
+            }
             if let Some(ui) = ui_handle.upgrade() {
                 // If this is already the active decree, don't reload from disk (prevents wiping unsaved edits)
                 if ui.get_active_decree_id() == id && ui.get_active_decree_status() != 0 {
                     return;
                 }
-                
+
                 info!(decree_id = %id, "Forge: select-decree");
                 let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
                     tracing::error!("Forge: Failed to load ledger for selection: {}", e);
@@ -669,18 +697,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(ord) = ledger.decrees.iter().find(|o| id == o.id.0) {
                     ui.set_active_decree_id(ord.id.0.clone().into());
                     ui.set_active_decree_label(ord.label.clone().into());
-                    ui.set_active_decree_status(1); 
+                    ui.set_active_decree_status(1);
                     ui.set_selected_step_id("".into());
                     ui.set_presence_ignore_mouse(ord.presence_config.ignore_mouse);
                     ui.set_presence_ignore_keyboard(ord.presence_config.ignore_keyboard);
-                    
+
                     ui.set_summons_path("".into());
                     ui.set_summons_pattern("".into());
                     ui.set_summons_combo("".into());
                     ui.set_summons_process("".into());
-                    
+
                     match &ord.summons {
-                        SummonsDef::FileCreated { ward_id, pattern, recursive } => {
+                        SummonsDef::FileCreated {
+                            ward_id,
+                            pattern,
+                            recursive,
+                        } => {
                             ui.set_summons_trigger_type(0);
                             ui.set_summons_path(normalize_windows_path(ward_id).into());
                             ui.set_summons_pattern(pattern.clone().into());
@@ -703,23 +735,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut incoming_steps = Vec::new();
                         for node in &ord.nodes {
                             if node.kind() == NodeKind::Action {
-                                if let arbiter_core::decree::NodeState::Action { action_type, .. } = &node.state {
+                                if let arbiter_core::decree::NodeState::Action {
+                                    action_type, ..
+                                } = &node.state
+                                {
                                     let (step_type, arg_a, arg_b, subtext) = match action_type {
-                                        ActionType::InscribeMove { source, destination } => {
-                                            (0, source.to_string_lossy().to_string(), destination.to_string_lossy().to_string(), "Inscribe: Move Mode".to_string())
-                                        }
-                                        ActionType::InscribeCopy { source, destination } => {
-                                            (0, source.to_string_lossy().to_string(), destination.to_string_lossy().to_string(), "Inscribe: Copy Mode".to_string())
-                                        }
-                                        ActionType::Shell { command, args, .. } => {
-                                            (1, command.clone(), args.join(" "), "Shell: execute program".to_string())
-                                        }
-                                        ActionType::Type(s) => {
-                                            (2, s.clone(), "".to_string(), "Synthetic: emit keys".to_string())
-                                        }
-                                        ActionType::Wait(ms) => {
-                                            (3, ms.to_string(), "".to_string(), "Steady Wait".to_string())
-                                        }
+                                        ActionType::InscribeMove {
+                                            source,
+                                            destination,
+                                        } => (
+                                            0,
+                                            source.to_string_lossy().to_string(),
+                                            destination.to_string_lossy().to_string(),
+                                            "Inscribe: Move Mode".to_string(),
+                                        ),
+                                        ActionType::InscribeCopy {
+                                            source,
+                                            destination,
+                                        } => (
+                                            0,
+                                            source.to_string_lossy().to_string(),
+                                            destination.to_string_lossy().to_string(),
+                                            "Inscribe: Copy Mode".to_string(),
+                                        ),
+                                        ActionType::Shell { command, args, .. } => (
+                                            1,
+                                            command.clone(),
+                                            args.join(" "),
+                                            "Shell: execute program".to_string(),
+                                        ),
+                                        ActionType::Type(s) => (
+                                            2,
+                                            s.clone(),
+                                            "".to_string(),
+                                            "Synthetic: emit keys".to_string(),
+                                        ),
+                                        ActionType::Wait(ms) => (
+                                            3,
+                                            ms.to_string(),
+                                            "".to_string(),
+                                            "Steady Wait".to_string(),
+                                        ),
                                         ActionType::Navigate(s) => {
                                             (4, s.clone(), "".to_string(), "Navigate".to_string())
                                         }
@@ -763,9 +819,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for i in 0..step_model.row_count() {
                 if let Some(mut row) = step_model.row_data(i) {
                     if row.id == id {
-                        // Special case: If this is an Inscribe step (type 0), 
+                        // Special case: If this is an Inscribe step (type 0),
                         // toggling the mode via the button should flip the subtext.
-                        if row.step_type == 0 && row.title == title && row.arg_a == a && row.arg_b == b {
+                        if row.step_type == 0
+                            && row.title == title
+                            && row.arg_a == a
+                            && row.arg_b == b
+                        {
                             if row.subtext.contains("Move") {
                                 row.subtext = "Inscribe: Copy Mode".into();
                             } else {
@@ -790,24 +850,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |step_type| {
             let id = generate_step_id();
             let (title, subtext, arg_a, arg_b) = match step_type {
-                0 => ("Move File",     "Inscribe: relocate artifact",      "${env.file_path}", "C:\\Destination\\"),
-                1 => ("Shell Command", "Shell: execute external program",  "program.exe",      "${env.file_path}"),
-                2 => ("Type Text",     "Synthetic: emit keystrokes",         "TYPE",             "${env.file_name}"),
-                3 => ("Steady Wait",   "Wait for condition to stabilise",  "1000",             ""),
-                4 => ("Navigate",      "OS-native navigation keystroke",  "win+s",            ""),
-                _ => ("Action",        "Arbiter node",                     "",                 ""),
+                0 => (
+                    "Move File",
+                    "Inscribe: relocate artifact",
+                    "${env.file_path}",
+                    "C:\\Destination\\",
+                ),
+                1 => (
+                    "Shell Command",
+                    "Shell: execute external program",
+                    "program.exe",
+                    "${env.file_path}",
+                ),
+                2 => (
+                    "Type Text",
+                    "Synthetic: emit keystrokes",
+                    "TYPE",
+                    "${env.file_name}",
+                ),
+                3 => ("Steady Wait", "Wait for condition to stabilise", "1000", ""),
+                4 => ("Navigate", "OS-native navigation keystroke", "win+s", ""),
+                _ => ("Action", "Arbiter node", "", ""),
             };
             info!(step_type, new_id = %id, "Forge: append-step");
             step_model.push(DecreeStep {
-                id:             id.clone().into(),
-                title:          title.into(),
-                subtext:        subtext.into(),
+                id: id.clone().into(),
+                title: title.into(),
+                subtext: subtext.into(),
                 step_type,
-                is_active:      false,
-                is_running:     false,
+                is_active: false,
+                is_running: false,
                 baton_required: step_type == 1,
-                arg_a:          arg_a.into(),
-                arg_b:          arg_b.into(),
+                arg_a: arg_a.into(),
+                arg_b: arg_b.into(),
             });
             if let Some(ui) = ui_handle.upgrade() {
                 ui.set_selected_step_id(id.into());
@@ -835,9 +910,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let cmd = ForgeCommand::RemoveDecree {
-                decree_id: id_str,
-            };
+            let cmd = ForgeCommand::RemoveDecree { decree_id: id_str };
             tokio::spawn(async move {
                 send_command(&cmd).await;
             });
@@ -848,7 +921,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_active_decree_label("No Decree Selected".into());
                     ui.set_active_decree_status(0);
                     STEP_MODEL.with(|m| {
-                        while m.row_count() > 0 { m.remove(0); }
+                        while m.row_count() > 0 {
+                            m.remove(0);
+                        }
                     });
                 }
             }
@@ -873,8 +948,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_copy_env(move |text| {
         #[cfg(windows)]
         {
-            use std::process::{Command, Stdio};
             use std::io::Write;
+            use std::process::{Command, Stdio};
             info!("Copying to clipboard: {}", text);
             if let Ok(mut child) = Command::new("clip").stdin(Stdio::piped()).spawn() {
                 if let Some(mut stdin) = child.stdin.take() {
@@ -1007,7 +1082,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ts_path_model_cb.push(SharedString::from(""));
         }
     });
-    
+
     ui.on_update_trusted_path({
         let ts_path_model_cb = ts_path_model_cb.clone();
         move |idx, val| {
@@ -1016,7 +1091,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    
+
     ui.on_remove_trusted_path({
         let ts_path_model_cb = ts_path_model_cb.clone();
         move |idx| {
@@ -1033,7 +1108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             baton_model_cb.push("".into());
         }
     });
-    
+
     ui.on_update_baton({
         let baton_model_cb = baton_model_cb.clone();
         move |idx, val| {
@@ -1042,7 +1117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    
+
     ui.on_remove_baton({
         let baton_model_cb = baton_model_cb.clone();
         move |idx| {
@@ -1126,14 +1201,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut trusted_paths = std::collections::HashSet::new();
                 for i in 0..ts_path_model_cb.row_count() {
                     if let Some(p) = ts_path_model_cb.row_data(i) {
-                        if !p.is_empty() { trusted_paths.insert(p.to_string()); }
+                        if !p.is_empty() {
+                            trusted_paths.insert(p.to_string());
+                        }
                     }
                 }
-                
+
                 let mut baton_allowed = std::collections::HashSet::new();
                 for i in 0..baton_model_cb.row_count() {
                     if let Some(b) = baton_model_cb.row_data(i) {
-                        if !b.is_empty() { baton_allowed.insert(b.to_string()); }
+                        if !b.is_empty() {
+                            baton_allowed.insert(b.to_string());
+                        }
                     }
                 }
 

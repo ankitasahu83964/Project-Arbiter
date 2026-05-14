@@ -4,10 +4,12 @@ use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree.
 pub struct DecreeId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree node.
 pub struct NodeId(pub String);
 
 impl From<&str> for NodeId {
@@ -35,6 +37,7 @@ impl std::fmt::Display for DecreeId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents supported automation actions.
 pub enum ActionType {
     Click,
     DoubleClick,
@@ -62,12 +65,14 @@ pub enum ActionType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents screen coordinates.
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents an executable automation action.
 pub struct Action {
     pub action_type: ActionType,
     pub point: Option<Point>,
@@ -75,12 +80,14 @@ pub struct Action {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Configuration for user presence detection.
 pub struct PresenceConfig {
     pub ignore_mouse: bool,
     pub ignore_keyboard: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// Configuration for filesystem monitoring wards.
 pub enum WardLayer {
     #[default]
     Surface,
@@ -88,6 +95,7 @@ pub enum WardLayer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Configuration for filesystem monitoring wards.
 pub struct WardConfig {
     pub id: String,
     pub path: PathBuf,
@@ -97,12 +105,14 @@ pub struct WardConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a workflow decree definition.
 pub struct Decree {
     pub nodes: Vec<DecreeNode>,
     pub presence_config: PresenceConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines the type of decree node.
 pub enum NodeKind {
     Entry,
     Action,
@@ -111,6 +121,7 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
+/// Represents the runtime state of a decree node.
 pub enum NodeState {
     #[serde(rename = "Action")]
     Action {
@@ -123,8 +134,10 @@ pub enum NodeState {
 }
 
 #[derive(Debug, Clone)]
+/// Represents a node inside a decree workflow.
 pub struct DecreeNode {
     pub id: NodeId,
+
     pub label: String,
     pub state: NodeState,
     pub next_nodes: HashMap<String, NodeId>,
@@ -222,6 +235,7 @@ impl DecreeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents external triggers capable of invoking decree execution.
 pub enum Summons {
     /// A file matching `pattern` finished writing inside `watch_path`.
     #[cfg(feature = "vigil-fs")]
@@ -257,6 +271,7 @@ impl Summons {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines supported runtime environment variables exposed to decrees.
 pub enum EnvKey {
     // ── Layer 1: Surface (Always available for file triggers) ──
     FileDir,
@@ -381,6 +396,7 @@ impl EnvKey {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Stores environment variables and runtime metadata.
 pub struct EnvContext {
     pub variables: HashMap<String, String>,
     #[serde(skip)]
@@ -608,6 +624,7 @@ fn compute_text_lines(_path: &PathBuf) -> Option<String> {
 }
 
 #[derive(Debug, Clone)]
+/// Represents execution events emitted by the runtime.
 pub enum RunEvent {
     /// A log line to be displayed in the Terminal of Commands.
     Log(crate::protocol::LogEntry),
@@ -618,7 +635,7 @@ pub enum RunEvent {
     /// Sequence completed normally.
     Done,
 }
-
+/// Contains runtime execution state passed into the orchestration engine.
 pub struct ExecData {
     pub nodes: Vec<DecreeNode>,
     pub context: EnvContext,

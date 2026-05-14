@@ -1,19 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Instant};
 use tracing::warn;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{OnceLock},
-    time::Instant,
-};
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree.
 pub struct DecreeId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree node.
 pub struct NodeId(pub String);
 
 impl From<&str> for NodeId {
@@ -40,8 +36,8 @@ impl std::fmt::Display for DecreeId {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents supported automation actions.
 pub enum ActionType {
     Click,
     DoubleClick,
@@ -50,9 +46,17 @@ pub enum ActionType {
     Scroll(i32),
     Navigate(String),
     Wait(u64),
-    InscribeMove { source: PathBuf, destination: PathBuf },
-    InscribeCopy { source: PathBuf, destination: PathBuf },
-    InscribeDelete { target: PathBuf },
+    InscribeMove {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    InscribeCopy {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    InscribeDelete {
+        target: PathBuf,
+    },
     Shell {
         command: String,
         args: Vec<String>,
@@ -61,12 +65,14 @@ pub enum ActionType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents screen coordinates.
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents an executable automation action.
 pub struct Action {
     pub action_type: ActionType,
     pub point: Option<Point>,
@@ -74,12 +80,14 @@ pub struct Action {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Configuration for user presence detection.
 pub struct PresenceConfig {
     pub ignore_mouse: bool,
     pub ignore_keyboard: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// Configuration for filesystem monitoring wards.
 pub enum WardLayer {
     #[default]
     Surface,
@@ -87,6 +95,7 @@ pub enum WardLayer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Configuration for filesystem monitoring wards.
 pub struct WardConfig {
     pub id: String,
     pub path: PathBuf,
@@ -96,12 +105,14 @@ pub struct WardConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a workflow decree definition.
 pub struct Decree {
     pub nodes: Vec<DecreeNode>,
     pub presence_config: PresenceConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines the type of decree node.
 pub enum NodeKind {
     Entry,
     Action,
@@ -110,6 +121,7 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
+/// Represents the runtime state of a decree node.
 pub enum NodeState {
     #[serde(rename = "Action")]
     Action {
@@ -122,8 +134,10 @@ pub enum NodeState {
 }
 
 #[derive(Debug, Clone)]
+/// Represents a node inside a decree workflow.
 pub struct DecreeNode {
     pub id: NodeId,
+
     pub label: String,
     pub state: NodeState,
     pub next_nodes: HashMap<String, NodeId>,
@@ -160,7 +174,12 @@ impl<'de> serde::Deserialize<'de> for DecreeNode {
                 }
             }
             "Entry" => NodeState::Empty,
-            _ => return Err(serde::de::Error::custom(format!("Unknown node kind: {}", raw.kind))),
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unknown node kind: {}",
+                    raw.kind
+                )))
+            }
         };
 
         Ok(DecreeNode {
@@ -188,7 +207,11 @@ impl serde::Serialize for DecreeNode {
         s.serialize_field("next_nodes", &self.next_nodes)?;
 
         match &self.state {
-            NodeState::Action { action_type, point, delay_ms } => {
+            NodeState::Action {
+                action_type,
+                point,
+                delay_ms,
+            } => {
                 s.serialize_field("kind", "Action")?;
                 s.serialize_field("action_type", action_type)?;
                 s.serialize_field("point", point)?;
@@ -202,7 +225,6 @@ impl serde::Serialize for DecreeNode {
     }
 }
 
-
 impl DecreeNode {
     pub fn kind(&self) -> NodeKind {
         match self.state {
@@ -212,8 +234,8 @@ impl DecreeNode {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents external triggers capable of invoking decree execution.
 pub enum Summons {
     /// A file matching `pattern` finished writing inside `watch_path`.
     #[cfg(feature = "vigil-fs")]
@@ -236,7 +258,9 @@ impl Summons {
         match self {
             #[cfg(feature = "vigil-fs")]
             Self::FileCreated {
-                watch_path, pattern, ..
+                watch_path,
+                pattern,
+                ..
             } => format!("FileCreated|{}|{}", watch_path.display(), pattern),
             #[cfg(feature = "vigil-keys")]
             Self::Hotkey { combo, .. } => format!("Hotkey|{}", combo),
@@ -246,8 +270,8 @@ impl Summons {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines supported runtime environment variables exposed to decrees.
 pub enum EnvKey {
     // ── Layer 1: Surface (Always available for file triggers) ──
     FileDir,
@@ -371,8 +395,8 @@ impl EnvKey {
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
+/// Stores environment variables and runtime metadata.
 pub struct EnvContext {
     pub variables: HashMap<String, String>,
     #[serde(skip)]
@@ -444,72 +468,48 @@ impl EnvContext {
         }
 
         match key {
-            EnvKey::ContentSha256 => {
-                self.sha256_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_sha256)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentMime => {
-                self.mime_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_mime)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentMd5 => {
-                self.md5_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_md5)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentEntropy => {
-                self.entropy_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_entropy)
-                    })
-                    .as_deref()
-            }
-            EnvKey::TextLines => {
-                self.text_lines_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_text_lines)
-                    })
-                    .as_deref()
-            }
+            EnvKey::ContentSha256 => self
+                .sha256_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_sha256))
+                .as_deref(),
+            EnvKey::ContentMime => self
+                .mime_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_mime))
+                .as_deref(),
+            EnvKey::ContentMd5 => self
+                .md5_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_md5))
+                .as_deref(),
+            EnvKey::ContentEntropy => self
+                .entropy_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_entropy))
+                .as_deref(),
+            EnvKey::TextLines => self
+                .text_lines_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_text_lines))
+                .as_deref(),
             _ => None,
         }
     }
 }
 
-
 #[cfg(feature = "vigil-deep")]
 fn compute_sha256(path: &PathBuf) -> Option<String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
-    
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buffer[..n]);
     }
-    
+
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -536,17 +536,19 @@ fn compute_mime(_path: &PathBuf) -> Option<String> {
 fn compute_md5(path: &PathBuf) -> Option<String> {
     use md5::{Digest, Md5};
     use std::io::Read;
-    
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Md5::new();
     let mut buffer = [0u8; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buffer[..n]);
     }
-    
+
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -567,7 +569,9 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
 
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         total_len += n as u64;
         for &b in &buffer[..n] {
             freq[b as usize] += 1;
@@ -577,7 +581,7 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
     if total_len == 0 {
         return Some("0.0000".to_string());
     }
-    
+
     let len_f = total_len as f64;
     let entropy: f64 = freq
         .iter()
@@ -605,10 +609,12 @@ fn compute_text_lines(path: &PathBuf) -> Option<String> {
 
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         count += buffer[..n].iter().filter(|&&b| b == b'\n').count();
     }
-    
+
     Some(count.to_string())
 }
 
@@ -617,8 +623,8 @@ fn compute_text_lines(_path: &PathBuf) -> Option<String> {
     None
 }
 
-
 #[derive(Debug, Clone)]
+/// Represents execution events emitted by the runtime.
 pub enum RunEvent {
     /// A log line to be displayed in the Terminal of Commands.
     Log(crate::protocol::LogEntry),
@@ -629,8 +635,7 @@ pub enum RunEvent {
     /// Sequence completed normally.
     Done,
 }
-
-
+/// Contains runtime execution state passed into the orchestration engine.
 pub struct ExecData {
     pub nodes: Vec<DecreeNode>,
     pub context: EnvContext,

@@ -176,11 +176,14 @@ pub fn spawn(
                 .send(RunEvent::Log(LogEntry {
                     time: chrono::Utc::now().to_rfc3339(),
                     tag: "HAND".into(),
-                    message: format!(
-                        "Macro iteration started (Last User Input: {}s ago){}",
-                        idle,
-                        if dry_run { " [DRY RUN]" } else { "" }
-                    ),
+                    message: if dry_run {
+                        format!(
+                            "[DRY-RUN] Macro iteration started (Last User Input: {}s ago)",
+                            idle
+                        )
+                    } else {
+                        format!("Macro iteration started (Last User Input: {}s ago)", idle)
+                    },
                     is_error: false,
                     decree_id: decree_id.as_ref().map(|id| id.0.clone()),
                 }))
@@ -227,7 +230,11 @@ pub fn spawn(
                     if !dry_run {
                         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                     } else {
-                        info!(ms, "DRY RUN: Would wait");
+                        info!(
+                            "[DRY-RUN] Would wait for {} ms 
+                            (execution bypassed)",
+                            ms
+                        );
                     }
                     let _ = event_tx.send(RunEvent::Progress(idx)).await;
                     continue;
@@ -246,7 +253,11 @@ pub fn spawn(
                             filter.resume_presence();
                             res
                         } else {
-                            info!(action = ?action.action_type, "DRY RUN: Would execute synthetic action");
+                            info!(
+                                action = ?action.action_type,
+                                point = ?action.point,
+                                "[DRY-RUN] Would execute synthetic action (execution bypassed)"
+                            );
                             Ok(())
                         }
                     }
@@ -262,7 +273,11 @@ pub fn spawn(
                             }
                             r.map(|_| ()).map_err(RunnerError::from)
                         } else {
-                            info!(?source, ?destination, "DRY RUN: Would move file");
+                            info!(
+                                ?source,
+                                ?destination,
+                                "[DRY-RUN] Would move file (execution bypassed)"
+                            );
                             Ok(())
                         }
                     }
@@ -277,7 +292,11 @@ pub fn spawn(
                             }
                             r.map(|_| ()).map_err(RunnerError::from)
                         } else {
-                            info!(?source, ?destination, "DRY RUN: Would copy file");
+                            info!(
+                                ?source,
+                                ?destination,
+                                "[DRY-RUN] Would copy file (execution bypassed)"
+                            );
                             Ok(())
                         }
                     }
@@ -287,7 +306,7 @@ pub fn spawn(
                                 .await
                                 .map_err(RunnerError::from)
                         } else {
-                            info!(?target, "DRY RUN: Would delete file");
+                            info!(?target, "[DRY-RUN] Would delete file (execution bypassed)");
                             Ok(())
                         }
                     }
@@ -320,7 +339,12 @@ pub fn spawn(
                                 .map_err(RunnerError::from)
                             }
                         } else {
-                            info!(%command, ?args, detached = detached, "DRY RUN: Would execute shell command");
+                            info!(
+                                %command,
+                                ?args,
+                                detached = detached,
+                                "[DRY-RUN] Would execute shell command (execution bypassed)"
+                            );
                             Ok(())
                         }
                     }

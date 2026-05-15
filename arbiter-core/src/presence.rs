@@ -2,13 +2,11 @@ use crate::filter::ArbiterFilter;
 use tokio::sync::mpsc;
 use tracing::{info, trace};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresenceSignal {
     MouseInput,
     KeyboardInput,
 }
-
 
 pub fn spawn_monitor(
     tx: mpsc::Sender<PresenceSignal>,

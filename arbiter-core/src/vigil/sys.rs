@@ -43,8 +43,20 @@ pub fn spawn_watcher(
                         context.insert("process_name", process.name());
                         context.insert("process_pid", &pid.to_string());
                         context.insert("trigger_mode", "ProcessAppeared");
-                        context.insert("timestamp", &format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
-                        context.insert("timestamp_local", &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string());
+                        context.insert(
+                            "timestamp",
+                            &format!(
+                                "{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs()
+                            ),
+                        );
+                        context.insert(
+                            "timestamp_local",
+                            &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string(),
+                        );
 
                         let summons = Summons::ProcessAppeared {
                             name: target_process_name.clone(),

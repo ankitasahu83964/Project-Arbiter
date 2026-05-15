@@ -1,12 +1,12 @@
 #[cfg(feature = "vigil-sys")]
 pub mod sys;
 
-use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
-use chrono::{DateTime, Utc, TimeZone};
+use chrono::{DateTime, TimeZone, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::mpsc;
+use tracing::{debug, info, warn};
 
 use crate::decree::{EnvContext, Summons, WardConfig, WardLayer};
 
@@ -25,28 +25,26 @@ fn is_debounced(signature: &str) -> bool {
         }
     };
     let now = Instant::now();
-    
+
     if let Some(last_fire) = map.get(signature) {
         if now.duration_since(*last_fire).as_millis() < DEBOUNCE_MS as u128 {
             debug!(signature, "Vigil: dropping debounced event");
             return true;
         }
     }
-    
+
     map.insert(signature.to_string(), now);
-    
+
     if map.len() > 100 {
         map.retain(|_, v| now.duration_since(*v).as_millis() < 5000);
     }
-    
+
     false
 }
-
 
 pub fn channel(capacity: usize) -> (mpsc::Sender<Summons>, mpsc::Receiver<Summons>) {
     mpsc::channel(capacity)
 }
-
 
 const STALE_EVENT_THRESHOLD_SECS: u64 = 5;
 
@@ -61,7 +59,6 @@ pub fn is_stale(event_age_secs: u64) -> bool {
     false
 }
 
-
 pub fn is_temp_file(path: &str) -> bool {
     matches!(
         std::path::Path::new(path)
@@ -70,7 +67,6 @@ pub fn is_temp_file(path: &str) -> bool {
         Some("tmp" | "part" | "crdownload" | "download")
     )
 }
-
 
 pub fn is_write_complete(path: &str) -> bool {
     let size_a = std::fs::metadata(path).map(|m| m.len()).ok();
@@ -86,13 +82,11 @@ pub fn is_write_complete(path: &str) -> bool {
     }
 }
 
-
-
 #[cfg(feature = "vigil-fs")]
 pub mod fs {
     use super::*;
-    use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
     use globset::GlobMatcher;
+    use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
     use tokio::sync::broadcast;
 
     pub fn spawn_watcher(
@@ -134,7 +128,11 @@ pub mod fs {
                 }
             };
 
-            let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            let mode = if recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
             let mut watching = false;
             let mut missing_logged = false;
 
@@ -178,7 +176,9 @@ pub mod fs {
                 }
 
                 match nrx.recv_timeout(std::time::Duration::from_millis(100)) {
-                    Ok(Ok(event)) if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) => {
+                    Ok(Ok(event))
+                        if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) =>
+                    {
                         let signet_config = crate::signet::load().unwrap_or_default();
 
                         for path in &event.paths {
@@ -193,25 +193,37 @@ pub mod fs {
                                 continue; // Authoritative WARN is handled inside signet::is_path_restricted
                             }
 
-                            if is_temp_file(&path_str) { continue; }
-
+                            if is_temp_file(&path_str) {
+                                continue;
+                            }
 
                             if let Some(ref m) = matcher {
-                                if !m.is_match(filename) { continue; }
+                                if !m.is_match(filename) {
+                                    continue;
+                                }
                             }
 
                             let mut context = super::EnvContext::new();
-                            
+
                             context.insert("file_path", &path_str);
                             if let Some(parent) = path.parent() {
                                 context.insert("file_dir", &parent.to_string_lossy());
                             }
                             context.insert("file_name", filename);
-                            context.insert("file_ext", path.extension().and_then(|e| e.to_str()).unwrap_or(""));
-                            
-                            let now_unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                            context.insert(
+                                "file_ext",
+                                path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+                            );
+
+                            let now_unix = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
                             context.insert("timestamp", &now_unix.to_string());
-                            context.insert("timestamp_local", &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string());
+                            context.insert(
+                                "timestamp_local",
+                                &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string(),
+                            );
 
                             if let Ok(meta) = std::fs::metadata(path) {
                                 let bytes = meta.len();
@@ -219,35 +231,61 @@ pub mod fs {
                                 context.insert("file_size_human", &format_bytes(bytes));
 
                                 if let Ok(created) = meta.created() {
-                                    let unix = created.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                                    let unix = created
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
                                     context.insert("file_created_unix", &unix.to_string());
-                                    let dt: DateTime<Utc> = Utc.timestamp_opt(unix as i64, 0).unwrap();
+                                    let dt: DateTime<Utc> =
+                                        Utc.timestamp_opt(unix as i64, 0).unwrap();
                                     context.insert("file_created_iso", &dt.to_rfc3339());
-                                    context.insert("file_created_local", &dt.with_timezone(&chrono::Local).format("%m/%d/%Y %I:%M %p").to_string());
+                                    context.insert(
+                                        "file_created_local",
+                                        &dt.with_timezone(&chrono::Local)
+                                            .format("%m/%d/%Y %I:%M %p")
+                                            .to_string(),
+                                    );
                                 }
                                 if let Ok(modified) = meta.modified() {
-                                    let unix = modified.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                                    let dt: DateTime<Utc> = Utc.timestamp_opt(unix as i64, 0).unwrap();
+                                    let unix = modified
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    let dt: DateTime<Utc> =
+                                        Utc.timestamp_opt(unix as i64, 0).unwrap();
                                     context.insert("file_modified_iso", &dt.to_rfc3339());
-                                    context.insert("file_modified_local", &dt.with_timezone(&chrono::Local).format("%m/%d/%Y %I:%M %p").to_string());
+                                    context.insert(
+                                        "file_modified_local",
+                                        &dt.with_timezone(&chrono::Local)
+                                            .format("%m/%d/%Y %I:%M %p")
+                                            .to_string(),
+                                    );
                                 }
 
-                                context.insert("file_readonly", &meta.permissions().readonly().to_string());
-                                
+                                context.insert(
+                                    "file_readonly",
+                                    &meta.permissions().readonly().to_string(),
+                                );
+
                                 #[cfg(windows)]
                                 {
                                     use std::os::windows::fs::MetadataExt;
-                                    context.insert("file_hidden", &((meta.file_attributes() & 0x2) != 0).to_string());
+                                    context.insert(
+                                        "file_hidden",
+                                        &((meta.file_attributes() & 0x2) != 0).to_string(),
+                                    );
                                 }
                             }
 
-                            let is_link = std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                            let is_link = std::fs::symlink_metadata(path)
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false);
                             context.insert("file_is_link", &is_link.to_string());
 
-                                #[cfg(windows)]
-                                if let Some(owner) = get_file_owner_windows(&path_str) {
-                                    context.insert("file_owner", &owner);
-                                }
+                            #[cfg(windows)]
+                            if let Some(owner) = get_file_owner_windows(&path_str) {
+                                context.insert("file_owner", &owner);
+                            }
 
                             context.source_path = Some(path.clone());
                             context.integrity_scan = analytical;
@@ -258,13 +296,18 @@ pub mod fs {
                                 context,
                             };
 
-                            let debounce_sig = format!("{}|{}", summons.to_registry_key(), filename);
+                            let debounce_sig =
+                                format!("{}|{}", summons.to_registry_key(), filename);
                             let path_str_check = path_str.clone();
 
                             let tx_clone = tx.clone();
                             std::thread::spawn(move || {
-                                if !super::is_write_complete(&path_str_check) { return; }
-                                if is_debounced(&debounce_sig) { return; }
+                                if !super::is_write_complete(&path_str_check) {
+                                    return;
+                                }
+                                if is_debounced(&debounce_sig) {
+                                    return;
+                                }
                                 let _ = tx_clone.blocking_send(summons);
                             });
                         }
@@ -296,12 +339,11 @@ pub mod fs {
 
     #[cfg(windows)]
     fn get_file_owner_windows(path: &str) -> Option<String> {
+        use windows::core::{HSTRING, PWSTR};
         use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
         use windows::Win32::Security::{
-            LookupAccountSidW, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-            SID_NAME_USE,
+            LookupAccountSidW, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE,
         };
-        use windows::core::{HSTRING, PWSTR};
 
         let path_w = HSTRING::from(path);
         let mut owner_sid = PSID::default();
@@ -318,7 +360,9 @@ pub mod fs {
                 None,
                 None,
                 &mut sd,
-            ).is_err() {
+            )
+            .is_err()
+            {
                 return None;
             }
 
@@ -350,7 +394,7 @@ pub mod fs {
                 return None;
             }
 
-            let name   = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+            let name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
             let domain = String::from_utf16_lossy(&domain_buf[..domain_len as usize]);
 
             // Format identically to how Windows Explorer displays ownership.
@@ -361,10 +405,7 @@ pub mod fs {
             })
         }
     }
-
 } // end pub mod fs
-
-
 
 #[cfg(feature = "vigil-keys")]
 pub mod keys {
@@ -386,10 +427,10 @@ pub mod keys {
                         return;
                     }
                 };
-                
+
                 let mut senders: std::collections::HashMap<u32, (String, tokio::sync::mpsc::Sender<Summons>)> = std::collections::HashMap::new();
                 let receiver = GlobalHotKeyEvent::receiver();
-                
+
                 loop {
                     while let Ok(cmd) = rx.try_recv() {
                         match cmd {
@@ -433,7 +474,12 @@ pub mod keys {
         };
     }
 
-    pub fn register_hotkey(combo: String, tx: tokio::sync::mpsc::Sender<Summons>) -> Result<(), String> {
-        HOTKEY_TX.send(HotkeyCommand::Register(combo, tx)).map_err(|e| e.to_string())
+    pub fn register_hotkey(
+        combo: String,
+        tx: tokio::sync::mpsc::Sender<Summons>,
+    ) -> Result<(), String> {
+        HOTKEY_TX
+            .send(HotkeyCommand::Register(combo, tx))
+            .map_err(|e| e.to_string())
     }
 }

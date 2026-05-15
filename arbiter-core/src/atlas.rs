@@ -6,7 +6,10 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
-use crate::decree::{DecreeId, EnvContext, ExecData, NodeId, NodeKind, DecreeNode, Decree, PresenceConfig, RunEvent, Summons};
+use crate::decree::{
+    Decree, DecreeId, DecreeNode, EnvContext, ExecData, NodeId, NodeKind, PresenceConfig, RunEvent,
+    Summons,
+};
 use crate::protocol::{ForgeCommand, LogEntry};
 
 #[cfg(feature = "presence")]
@@ -32,7 +35,7 @@ pub struct Atlas {
     pub registry: HashMap<String, Decree>,
     pub active_presence_config: PresenceConfig,
     pub active_decree_id: Option<DecreeId>,
-    
+
     pub active_watchers: HashMap<String, tokio::sync::broadcast::Sender<()>>,
     /// Pre-compiled to avoid re-parsing on every event.
     compiled_patterns: HashMap<String, globset::GlobMatcher>,
@@ -121,7 +124,11 @@ impl Atlas {
         if decree.is_none() {
             if let Summons::FileCreated { watch_path, .. } = &summons {
                 let filename = match &summons {
-                    Summons::FileCreated { context, .. } => context.variables.get("file_name").cloned().unwrap_or_default(),
+                    Summons::FileCreated { context, .. } => context
+                        .variables
+                        .get("file_name")
+                        .cloned()
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
 
@@ -154,13 +161,18 @@ impl Atlas {
                 Summons::Manual { context, .. } => context,
             };
 
-            self.dispatch_decree(key, decree, context, false, run_tx, log_broadcast).await;
+            self.dispatch_decree(key, decree, context, false, run_tx, log_broadcast)
+                .await;
         } else {
             debug!(%key, "Atlas: unassigned Summons received, ignoring");
         }
     }
 
-    fn reset_state(&mut self, log_broadcast: &tokio::sync::broadcast::Sender<LogEntry>, reason: &str) {
+    fn reset_state(
+        &mut self,
+        log_broadcast: &tokio::sync::broadcast::Sender<LogEntry>,
+        reason: &str,
+    ) {
         if self.state == EngineState::Idle {
             return;
         }
@@ -187,9 +199,17 @@ impl Atlas {
         if summons_key.starts_with("FileCreated|") {
             let parts: Vec<&str> = summons_key.splitn(3, '|').collect();
             if let Some(&pattern) = parts.get(2) {
-                match globset::GlobBuilder::new(pattern).case_insensitive(true).build() {
-                    Ok(g) => { self.compiled_patterns.insert(summons_key.clone(), g.compile_matcher()); }
-                    Err(e) => warn!(%e, %pattern, "Atlas: could not pre-compile glob, fuzzy match disabled for this decree"),
+                match globset::GlobBuilder::new(pattern)
+                    .case_insensitive(true)
+                    .build()
+                {
+                    Ok(g) => {
+                        self.compiled_patterns
+                            .insert(summons_key.clone(), g.compile_matcher());
+                    }
+                    Err(e) => {
+                        warn!(%e, %pattern, "Atlas: could not pre-compile glob, fuzzy match disabled for this decree")
+                    }
                 }
             }
         }
@@ -293,7 +313,7 @@ impl Atlas {
                                         if w.recursive != *recursive {
                                             info!(path = %normalized_ward_id, from = w.recursive, to = *recursive, "Atlas: updating Ward recursion level (Allowed/Denied)");
                                             w.recursive = *recursive;
-                                            
+
                                             // Stop old watcher and spawn new one with correct mode
                                             if let Some(stop_tx) = self.active_watchers.get(&normalized_ward_id) {
                                                 let _ = stop_tx.send(());
@@ -390,19 +410,19 @@ impl Atlas {
                             merge_ward_paths_into_signet(
                                 ledger.wards.iter().map(|w| w.path.to_string_lossy().to_string())
                             );
-                            
+
                             // Hot-reload File Watchers
                             info!("Atlas: terminating active ward monitors");
                             for (_, stop_tx) in self.active_watchers.drain() {
                                 let _ = stop_tx.send(());
                             }
-                            
+
                             info!("Atlas: booting new ward monitors");
                             for ward in &ledger.wards {
                                 let stop_tx = crate::vigil::fs::spawn_watcher(ward.clone(), filter.clone(), vigil_tx.clone());
                                 self.active_watchers.insert(normalize_windows_path(&ward.path.to_string_lossy()), stop_tx);
                             }
-                            
+
                             let _ = log_broadcast.send(LogEntry {
                                 time: chrono::Utc::now().to_rfc3339(),
                                 tag: "VIGIL".into(),
@@ -416,7 +436,7 @@ impl Atlas {
                             self.reset_state(&log_broadcast, "Engine reset automatically due to Signet constraint changes.");
                             let _ = crate::signet::save(&cfg);
                             crate::signet::reload_cache();
-                            
+
                             // Re-apply environment to ensure mapping limits are updated.
                             // The runner reads mapped environment at execution, so live updates
                             // take effect immediately on next decree run.
@@ -425,7 +445,7 @@ impl Atlas {
                             if let Err(e) = crate::signet::sync_startup_registry(cfg.launch_on_startup) {
                                 error!(%e, "Atlas: failed to sync startup registry");
                             }
-                            
+
                             let _ = log_broadcast.send(LogEntry {
                                 time: chrono::Utc::now().to_rfc3339(),
                                 tag: "SIGNT".into(),
@@ -591,13 +611,19 @@ impl Atlas {
         self.active_decree_id = Some(DecreeId(key.clone()));
 
         let msg = format!("Summons matched: {}", key);
-        push_log(&self.engine_logs, "ATLAS", &msg, false, self.active_decree_id.as_ref().map(|id| id.0.clone()));
-        let _ = log_broadcast.send(LogEntry { 
+        push_log(
+            &self.engine_logs,
+            "ATLAS",
+            &msg,
+            false,
+            self.active_decree_id.as_ref().map(|id| id.0.clone()),
+        );
+        let _ = log_broadcast.send(LogEntry {
             time: chrono::Utc::now().to_rfc3339(),
-            tag: "ATLAS".into(), 
-            message: msg, 
-            is_error: false, 
-            decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone())
+            tag: "ATLAS".into(),
+            message: msg,
+            is_error: false,
+            decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone()),
         });
 
         self.state = EngineState::Executing;
@@ -665,17 +691,21 @@ impl Atlas {
             false,
             self.active_decree_id.as_ref().map(|id| id.0.clone()),
         );
-        let _ = log_broadcast.send(LogEntry { 
+        let _ = log_broadcast.send(LogEntry {
             time: chrono::Utc::now().to_rfc3339(),
-            tag: "PRESN".into(), 
-            message: msg.into(), 
+            tag: "PRESN".into(),
+            message: msg.into(),
             is_error: false,
             decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone()),
         });
         warn!("Atlas yielded to human presence");
     }
 
-    fn handle_run_event(&mut self, event: RunEvent, log_broadcast: &tokio::sync::broadcast::Sender<LogEntry>) {
+    fn handle_run_event(
+        &mut self,
+        event: RunEvent,
+        log_broadcast: &tokio::sync::broadcast::Sender<LogEntry>,
+    ) {
         match event {
             RunEvent::Log(mut entry) => {
                 if entry.time.is_empty() {
@@ -693,11 +723,17 @@ impl Atlas {
                 debug!(idx, "Atlas: node execution complete");
             }
             RunEvent::Panic(msg) => {
-                push_log(&self.engine_logs, "ATLAS", &msg, true, self.active_decree_id.as_ref().map(|id| id.0.clone()));
-                let _ = log_broadcast.send(LogEntry { 
+                push_log(
+                    &self.engine_logs,
+                    "ATLAS",
+                    &msg,
+                    true,
+                    self.active_decree_id.as_ref().map(|id| id.0.clone()),
+                );
+                let _ = log_broadcast.send(LogEntry {
                     time: chrono::Utc::now().to_rfc3339(),
-                    tag: "ATLAS".into(), 
-                    message: msg.clone(), 
+                    tag: "ATLAS".into(),
+                    message: msg.clone(),
                     is_error: true,
                     decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone()),
                 });
@@ -707,12 +743,18 @@ impl Atlas {
             }
             RunEvent::Done => {
                 let msg = "Sequence complete.";
-                push_log(&self.engine_logs, "ATLAS", msg, false, self.active_decree_id.as_ref().map(|id| id.0.clone()));
-                let _ = log_broadcast.send(LogEntry { 
+                push_log(
+                    &self.engine_logs,
+                    "ATLAS",
+                    msg,
+                    false,
+                    self.active_decree_id.as_ref().map(|id| id.0.clone()),
+                );
+                let _ = log_broadcast.send(LogEntry {
                     time: chrono::Utc::now().to_rfc3339(),
-                    tag: "ATLAS".into(), 
-                    message: msg.into(), 
-                    is_error: false, 
+                    tag: "ATLAS".into(),
+                    message: msg.into(),
+                    is_error: false,
                     decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone()),
                 });
                 info!("Atlas sequence complete — returning to Idle");
@@ -729,7 +771,6 @@ impl Default for Atlas {
         Self::new()
     }
 }
-
 
 pub fn compile_sequence(nodes_map: &HashMap<NodeId, DecreeNode>) -> Option<Vec<DecreeNode>> {
     let entry = nodes_map.values().find(|n| n.kind() == NodeKind::Entry)?;

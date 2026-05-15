@@ -1,12 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Instant};
 use tracing::warn;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{OnceLock},
-    time::Instant,
-};
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -40,7 +34,6 @@ impl std::fmt::Display for DecreeId {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ActionType {
     Click,
@@ -50,9 +43,17 @@ pub enum ActionType {
     Scroll(i32),
     Navigate(String),
     Wait(u64),
-    InscribeMove { source: PathBuf, destination: PathBuf },
-    InscribeCopy { source: PathBuf, destination: PathBuf },
-    InscribeDelete { target: PathBuf },
+    InscribeMove {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    InscribeCopy {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    InscribeDelete {
+        target: PathBuf,
+    },
     Shell {
         command: String,
         args: Vec<String>,
@@ -160,7 +161,12 @@ impl<'de> serde::Deserialize<'de> for DecreeNode {
                 }
             }
             "Entry" => NodeState::Empty,
-            _ => return Err(serde::de::Error::custom(format!("Unknown node kind: {}", raw.kind))),
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unknown node kind: {}",
+                    raw.kind
+                )))
+            }
         };
 
         Ok(DecreeNode {
@@ -188,7 +194,11 @@ impl serde::Serialize for DecreeNode {
         s.serialize_field("next_nodes", &self.next_nodes)?;
 
         match &self.state {
-            NodeState::Action { action_type, point, delay_ms } => {
+            NodeState::Action {
+                action_type,
+                point,
+                delay_ms,
+            } => {
                 s.serialize_field("kind", "Action")?;
                 s.serialize_field("action_type", action_type)?;
                 s.serialize_field("point", point)?;
@@ -202,7 +212,6 @@ impl serde::Serialize for DecreeNode {
     }
 }
 
-
 impl DecreeNode {
     pub fn kind(&self) -> NodeKind {
         match self.state {
@@ -211,7 +220,6 @@ impl DecreeNode {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Summons {
@@ -236,7 +244,9 @@ impl Summons {
         match self {
             #[cfg(feature = "vigil-fs")]
             Self::FileCreated {
-                watch_path, pattern, ..
+                watch_path,
+                pattern,
+                ..
             } => format!("FileCreated|{}|{}", watch_path.display(), pattern),
             #[cfg(feature = "vigil-keys")]
             Self::Hotkey { combo, .. } => format!("Hotkey|{}", combo),
@@ -245,7 +255,6 @@ impl Summons {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnvKey {
@@ -371,7 +380,6 @@ impl EnvKey {
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EnvContext {
     pub variables: HashMap<String, String>,
@@ -444,72 +452,48 @@ impl EnvContext {
         }
 
         match key {
-            EnvKey::ContentSha256 => {
-                self.sha256_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_sha256)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentMime => {
-                self.mime_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_mime)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentMd5 => {
-                self.md5_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_md5)
-                    })
-                    .as_deref()
-            }
-            EnvKey::ContentEntropy => {
-                self.entropy_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_entropy)
-                    })
-                    .as_deref()
-            }
-            EnvKey::TextLines => {
-                self.text_lines_cache
-                    .get_or_init(|| {
-                        self.source_path
-                            .as_ref()
-                            .and_then(compute_text_lines)
-                    })
-                    .as_deref()
-            }
+            EnvKey::ContentSha256 => self
+                .sha256_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_sha256))
+                .as_deref(),
+            EnvKey::ContentMime => self
+                .mime_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_mime))
+                .as_deref(),
+            EnvKey::ContentMd5 => self
+                .md5_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_md5))
+                .as_deref(),
+            EnvKey::ContentEntropy => self
+                .entropy_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_entropy))
+                .as_deref(),
+            EnvKey::TextLines => self
+                .text_lines_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_text_lines))
+                .as_deref(),
             _ => None,
         }
     }
 }
 
-
 #[cfg(feature = "vigil-deep")]
 fn compute_sha256(path: &PathBuf) -> Option<String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
-    
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buffer[..n]);
     }
-    
+
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -536,17 +520,19 @@ fn compute_mime(_path: &PathBuf) -> Option<String> {
 fn compute_md5(path: &PathBuf) -> Option<String> {
     use md5::{Digest, Md5};
     use std::io::Read;
-    
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Md5::new();
     let mut buffer = [0u8; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buffer[..n]);
     }
-    
+
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -567,7 +553,9 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
 
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         total_len += n as u64;
         for &b in &buffer[..n] {
             freq[b as usize] += 1;
@@ -577,7 +565,7 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
     if total_len == 0 {
         return Some("0.0000".to_string());
     }
-    
+
     let len_f = total_len as f64;
     let entropy: f64 = freq
         .iter()
@@ -605,10 +593,12 @@ fn compute_text_lines(path: &PathBuf) -> Option<String> {
 
     loop {
         let n = file.read(&mut buffer).ok()?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         count += buffer[..n].iter().filter(|&&b| b == b'\n').count();
     }
-    
+
     Some(count.to_string())
 }
 
@@ -616,7 +606,6 @@ fn compute_text_lines(path: &PathBuf) -> Option<String> {
 fn compute_text_lines(_path: &PathBuf) -> Option<String> {
     None
 }
-
 
 #[derive(Debug, Clone)]
 pub enum RunEvent {
@@ -629,7 +618,6 @@ pub enum RunEvent {
     /// Sequence completed normally.
     Done,
 }
-
 
 pub struct ExecData {
     pub nodes: Vec<DecreeNode>,

@@ -1,15 +1,14 @@
-use std::{collections::HashSet, sync::Arc};
 use regex::Regex;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{error, info, warn};
 
 use crate::{hand::HardwareBridge, inscribe, shell};
 use arbiter_core::{
+    decree::{Action, ActionType, DecreeId, DecreeNode, EnvContext, NodeKind, NodeState, RunEvent},
     filter::ArbiterFilter,
-    decree::{Action, ActionType, EnvContext, NodeKind, DecreeNode, RunEvent, DecreeId, NodeState},
     protocol::LogEntry,
 };
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -20,8 +19,6 @@ pub enum RunnerError {
     #[error(transparent)]
     ShellError(#[from] crate::shell::ShellError),
 }
-
-
 
 pub enum ExecCmd {
     Run {
@@ -38,29 +35,29 @@ pub enum ExecCmd {
     },
 }
 
-
 lazy_static::lazy_static! {
     static ref QUEUE_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 }
-
 
 lazy_static::lazy_static! {
     static ref ENV_RE: Regex = Regex::new(r"\$\{env\.([^}]+)\}").unwrap();
 }
 
 fn interpolate_str(text: &str, ctx: &EnvContext, sanitize: bool) -> String {
-    ENV_RE.replace_all(text, |caps: &regex::Captures| {
-        let key = &caps[1];
-        if let Some(value) = ctx.resolve(key) {
-            if sanitize {
-                sanitize_shell_arg(value)
+    ENV_RE
+        .replace_all(text, |caps: &regex::Captures| {
+            let key = &caps[1];
+            if let Some(value) = ctx.resolve(key) {
+                if sanitize {
+                    sanitize_shell_arg(value)
+                } else {
+                    value.to_string()
+                }
             } else {
-                value.to_string()
+                caps[0].to_string()
             }
-        } else {
-            caps[0].to_string()
-        }
-    }).into_owned()
+        })
+        .into_owned()
 }
 
 fn sanitize_shell_arg(s: &str) -> String {
@@ -112,7 +109,6 @@ fn interpolate_action(action: &mut ActionType, ctx: &EnvContext) {
     }
 }
 
-
 #[cfg(windows)]
 fn get_idle_secs() -> u64 {
     use windows::Win32::{
@@ -138,7 +134,6 @@ fn get_idle_secs() -> u64 {
 fn get_idle_secs() -> u64 {
     0
 }
-
 
 pub fn spawn(
     mut rx: mpsc::Receiver<ExecCmd>,
@@ -171,19 +166,25 @@ pub fn spawn(
             if trigger_time.elapsed().as_secs() > 5 {
                 warn!("Runner: Hibernation Guard triggered — dropping stale event (age > 5s)");
                 let _ = event_tx.send(RunEvent::Done).await;
-                continue; 
+                continue;
             }
 
             let idle = get_idle_secs();
             info!(idle_secs = idle, "Runner: user idle time at sequence start");
 
-            let _ = event_tx.send(RunEvent::Log(LogEntry {
-                time: chrono::Utc::now().to_rfc3339(),
-                tag: "HAND".into(),
-                message: format!("Macro iteration started (Last User Input: {}s ago){}", idle, if dry_run { " [DRY RUN]" } else { "" }),
-                is_error: false,
-                decree_id: decree_id.as_ref().map(|id| id.0.clone()),
-            })).await;
+            let _ = event_tx
+                .send(RunEvent::Log(LogEntry {
+                    time: chrono::Utc::now().to_rfc3339(),
+                    tag: "HAND".into(),
+                    message: format!(
+                        "Macro iteration started (Last User Input: {}s ago){}",
+                        idle,
+                        if dry_run { " [DRY RUN]" } else { "" }
+                    ),
+                    is_error: false,
+                    decree_id: decree_id.as_ref().map(|id| id.0.clone()),
+                }))
+                .await;
 
             let _ = event_tx
                 .send(RunEvent::Log(LogEntry {
@@ -202,7 +203,6 @@ pub fn spawn(
                 }))
                 .await;
 
-
             let mut abort_rx = abort_rx; // make mutable to use in loop
 
             for (idx, node) in nodes.iter().enumerate() {
@@ -216,16 +216,20 @@ pub fn spawn(
                 }
 
                 let mut action = match &node.state {
-                    NodeState::Action { action_type, point, delay_ms } => {
-                        Action {
-                            action_type: action_type.clone(),
-                            point: point.clone(),
-                            delay_ms: *delay_ms,
-                        }
-                    }
+                    NodeState::Action {
+                        action_type,
+                        point,
+                        delay_ms,
+                    } => Action {
+                        action_type: action_type.clone(),
+                        point: point.clone(),
+                        delay_ms: *delay_ms,
+                    },
                     _ => {
                         error!(%node.id, "Runner: Expected Action state, found something else");
-                        let _ = event_tx.send(RunEvent::Panic("Engine halt: Malformed decree data".into())).await;
+                        let _ = event_tx
+                            .send(RunEvent::Panic("Engine halt: Malformed decree data".into()))
+                            .await;
                         break;
                     }
                 };
@@ -277,11 +281,7 @@ pub fn spawn(
                         destination,
                     } => {
                         if !dry_run {
-                            let r = inscribe::move_file(
-                                source,
-                                destination,
-                                &trusted_roots,
-                            ).await;
+                            let r = inscribe::move_file(source, destination, &trusted_roots).await;
                             if let Ok(ref final_dst) = r {
                                 filter.mark(final_dst);
                             }
@@ -300,11 +300,7 @@ pub fn spawn(
                         destination,
                     } => {
                         if !dry_run {
-                            let r = inscribe::copy_file(
-                                source,
-                                destination,
-                                &trusted_roots,
-                            ).await;
+                            let r = inscribe::copy_file(source, destination, &trusted_roots).await;
                             if let Ok((ref final_dst, _)) = r {
                                 filter.mark(final_dst);
                             }
@@ -320,7 +316,8 @@ pub fn spawn(
                     }
                     ActionType::InscribeDelete { target } => {
                         if !dry_run {
-                            inscribe::delete_file(target, &trusted_roots).await
+                            inscribe::delete_file(target, &trusted_roots)
+                                .await
                                 .map_err(RunnerError::from)
                         } else {
                             info!(?target, "[DRY-RUN] Would delete file (execution bypassed)");
@@ -336,12 +333,24 @@ pub fn spawn(
                         if !dry_run {
                             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                             if *detached {
-                                shell::spawn_detached(command.as_str(), command.as_str(), &arg_refs, &baton_allowed).await
-                                    .map_err(RunnerError::from)
+                                shell::spawn_detached(
+                                    command.as_str(),
+                                    command.as_str(),
+                                    &arg_refs,
+                                    &baton_allowed,
+                                )
+                                .await
+                                .map_err(RunnerError::from)
                             } else {
-                                shell::run(command.as_str(), command.as_str(), &arg_refs, &baton_allowed).await
-                                    .map(|_| ())
-                                    .map_err(RunnerError::from)
+                                shell::run(
+                                    command.as_str(),
+                                    command.as_str(),
+                                    &arg_refs,
+                                    &baton_allowed,
+                                )
+                                .await
+                                .map(|_| ())
+                                .map_err(RunnerError::from)
                             }
                         } else {
                             info!(
@@ -358,7 +367,12 @@ pub fn spawn(
 
                 if let Err(e) = exec_result {
                     error!(%e, id = %node.id, "Runner: action failed");
-                    let _ = event_tx.send(RunEvent::Panic(format!("Step '{}' failed: {}", node.label, e))).await;
+                    let _ = event_tx
+                        .send(RunEvent::Panic(format!(
+                            "Step '{}' failed: {}",
+                            node.label, e
+                        )))
+                        .await;
                     break;
                 }
 

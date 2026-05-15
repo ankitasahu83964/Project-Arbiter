@@ -1,5 +1,5 @@
 fn main() {
-    // Embed the icon.ico from the forge project as a Windows PE resource 
+    // Embed the icon.ico from the forge project as a Windows PE resource
     // so the arbiter.exe service shows the correct icon in Task Manager,
     // Explorer, and the Alt+Tab switcher.
     #[cfg(windows)]
@@ -14,7 +14,8 @@ fn main() {
         res.set("LegalCopyright", "Copyright (c) 2026");
         res.set("ProductVersion", "0.2.0.0");
         res.set("FileVersion", "0.2.0.0");
-        res.set_manifest(r#"
+        res.set_manifest(
+            r#"
         <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
           <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
             <security>
@@ -24,7 +25,9 @@ fn main() {
             </security>
           </trustInfo>
         </assembly>
-        "#);
-        res.compile().expect("Failed to embed Windows icon resource");
+        "#,
+        );
+        res.compile()
+            .expect("Failed to embed Windows icon resource");
     }
 }

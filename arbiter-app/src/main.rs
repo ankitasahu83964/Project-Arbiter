@@ -117,11 +117,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         writer,
                         tokio_util::codec::LengthDelimitedCodec::new(),
                     );
-                    while let Ok(entry) = rx.recv().await {
-                        if let Ok(bin) = rmp_serde::to_vec_named(&entry) {
-                            if framed.send(bytes::Bytes::from(bin)).await.is_err() {
-                                break;
+                    loop {
+                        match rx.recv().await {
+                            Ok(entry) => {
+                                if let Ok(bin) = rmp_serde::to_vec_named(&entry) {
+                                    if framed.send(bytes::Bytes::from(bin)).await.is_err() {
+                                        break;
+                                    }
+                                }
                             }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 }
@@ -306,38 +312,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ONCE.call_once(move || {
             let mut log_rx = atlas_logs.subscribe();
             tokio::spawn(async move {
-                while let Ok(entry) = log_rx.recv().await {
-                    match entry.tag.as_str() {
-                        "ATLAS" => {
-                            if entry.message.contains("Engine paused") {
-                                let _ = proxy_atlas
-                                    .send_event(tray::TrayAppEvent::StatusUpdate("Paused".into()));
-                                continue;
-                            }
-                            if entry.message.contains("Engine resumed") {
-                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
-                                    "Standing By".into(),
-                                ));
-                                continue;
-                            }
-                            if entry.message.contains("matched") {
-                                if let Some(id) = entry.decree_id {
-                                    let _ =
-                                        proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
-                                            format!("Executing: {}", id),
-                                        ));
+                loop {
+                    match log_rx.recv().await {
+                        Ok(entry) => match entry.tag.as_str() {
+                            "ATLAS" => {
+                                if entry.message.contains("Engine paused") {
+                                    let _ = proxy_atlas.send_event(
+                                        tray::TrayAppEvent::StatusUpdate("Paused".into()),
+                                    );
+                                    continue;
                                 }
-                            } else if entry.message.contains("complete") {
-                                let _ = proxy_atlas.send_event(tray::TrayAppEvent::StatusUpdate(
-                                    "Standing By".into(),
-                                ));
+                                if entry.message.contains("Engine resumed") {
+                                    let _ = proxy_atlas.send_event(
+                                        tray::TrayAppEvent::StatusUpdate("Standing By".into()),
+                                    );
+                                    continue;
+                                }
+                                if entry.message.contains("matched") {
+                                    if let Some(id) = entry.decree_id {
+                                        let _ = proxy_atlas.send_event(
+                                            tray::TrayAppEvent::StatusUpdate(format!(
+                                                "Executing: {}",
+                                                id
+                                            )),
+                                        );
+                                    }
+                                } else if entry.message.contains("complete") {
+                                    let _ = proxy_atlas.send_event(
+                                        tray::TrayAppEvent::StatusUpdate("Standing By".into()),
+                                    );
+                                }
                             }
-                        }
-                        "PRESN" => {
-                            let _ = proxy_atlas
-                                .send_event(tray::TrayAppEvent::StatusUpdate("Yielded".into()));
-                        }
-                        _ => {}
+                            "PRESN" => {
+                                let _ = proxy_atlas
+                                    .send_event(tray::TrayAppEvent::StatusUpdate("Yielded".into()));
+                            }
+                            _ => {}
+                        },
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
             });

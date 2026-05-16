@@ -42,7 +42,17 @@ While my own commit history isn't always spotless, clean commits make it signifi
 *   **Format & Lint**: All code must pass `cargo fmt` and `cargo clippy -- -D warnings`. I rely heavily on the CI pipeline to enforce code style so I don't have to nitpick your formatting during reviews. The build will automatically fail and reject your PR if it catches warnings, so run these checks locally before you push.
 *   **Testing**: Tests are mandatory. If you write a new feature, especially involving arbiter-bridge or serialization, you must include isolated unit tests.
 *   **Safety**: Never bypass the Signet security layer (path jailing/binary whitelisting) without a very good reason. Arbiter relies on it for much of its functionality, and is by-design made to fail without its strict sandboxing.
-*   **Note on AI & LLMs**: Arbiter is a project about human-aware logic. While LLMs can be helpful for boilerplate, I moreso value PRs where the logic and design are clearly human-driven. Please avoid submitting large blocks of unverified AI code; I'd much rather see a smaller, manual PR that you fully understand. Even if you use a tool to help you, you are in charge of every line that goes in and every result that comes out. Use them if they help, but remember that you are the author of the PR, not the model.
+
+### AI & LLM Policy: Total Ownership
+Arbiter is a project about human-aware logic. It would be quite weird to build a system centered on human awareness using automated AI slop. Even though LLMs can be helpful for generating basic boilerplate or exploring ideas, I value pull requests where the logic, design, and edge case handling are clearly human-driven.
+
+If you use AI tools to assist your workflow, you must adhere to the following strict rules:
+* **You Wrote It Rule**: You are entirely in charge of every single line of code that goes in and every side effect that comes out. Your account made the PR and is thus your responsibility. If your code introduces a bug, memory leak, or security flaw, "AI wrote it" is not an acceptable defense.
+* **No Raw LLM Artifacts**: PRs containing conversational LLM commentary (e.g., "Here is a robust implementation of..."), markdown formatting artifacts, or unedited AI comments will be closed immediately.
+* **No Automated Self-Reviews**: Do not summon AI bots (like Copilot, etc.) to review your PR or approve your code within this repository.
+* **Prefer Small & Manual**: I would much rather review a 50-line, manual PR that you deeply understand than a 500-line AI dump that you barely skimmed and produced in 10 minutes.
+
+**Enforcement**: Maintainer time is a finite resource. If a PR displays obvious signs of unverified AI generation or lacks manual verification, it will be closed and locked immediately without a line-by-line review.
 
 ---
 

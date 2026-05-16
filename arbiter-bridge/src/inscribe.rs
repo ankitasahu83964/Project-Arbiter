@@ -258,4 +258,72 @@ mod tests {
             .iter()
             .any(|w| w.contains("System-critical")));
     }
+    #[tokio::test]
+    async fn missing_source_file_returns_error() {
+        let root = tempdir().unwrap();
+
+        let trusted = vec![root.path().to_string_lossy().to_string()];
+
+        let src = root.path().join("missing.txt");
+        let dst = root.path().join("out.txt");
+
+        let res = move_file(&src, &dst, &trusted).await;
+
+        assert!(matches!(res, Err(InscribeError::SourceNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn delete_file_removes_file() {
+        let root = tempdir().unwrap();
+
+        let trusted = vec![root.path().to_string_lossy().to_string()];
+
+        let file = root.path().join("temp.txt");
+
+        File::create(&file).unwrap();
+
+        let res = delete_file(&file, &trusted).await;
+
+        assert!(res.is_ok());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn dry_run_detects_matching_files() {
+        let root = tempdir().unwrap();
+
+        let file1 = root.path().join("a.log");
+        let file2 = root.path().join("b.txt");
+
+        File::create(&file1).unwrap();
+        File::create(&file2).unwrap();
+
+        let report = dry_run_walk(root.path(), "*.log");
+
+        assert_eq!(report.affected.len(), 1);
+        assert!(report.affected[0].to_string_lossy().contains("a.log"));
+    }
+
+    #[tokio::test]
+    async fn copy_file_returns_bytes_and_creates_destination() {
+        let root = tempdir().unwrap();
+
+        let trusted = vec![root.path().to_string_lossy().to_string()];
+
+        let src = root.path().join("source.txt");
+        let dst = root.path().join("copied.txt");
+
+        std::fs::write(&src, "hello world").unwrap();
+
+        let result = copy_file(&src, &dst, &trusted).await;
+
+        assert!(result.is_ok());
+
+        let (returned_path, bytes) = result.unwrap();
+
+        assert_eq!(returned_path, dst);
+        assert_eq!(bytes, 11);
+
+        assert!(dst.exists());
+    }
 }

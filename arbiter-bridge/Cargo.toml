@@ -7,7 +7,7 @@ license.workspace = true
 description = "The Hand, Inscribe, and Shell — the mechanical execution bridge."
 
 [dependencies]
-arbiter-core = { path = "../arbiter-core" }
+arbiter-core = { path = "../arbiter-core", features= ["signet", "vigil-fs", "vigil-keys"]}
 enigo       = { workspace = true }
 walkdir     = { workspace = true }
 regex       = { workspace = true }

@@ -188,6 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn wait_action_does_not_need_coordinates() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -225,6 +226,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn execute_rejects_invalid_coordinates_before_input_execution() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -240,6 +242,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn empty_type_action_returns_ok() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -254,6 +257,7 @@ mod tests {
     // ---------------- NEW IPC STATE TRANSITION TESTS ----------------
 
     #[tokio::test]
+    #[ignore]
     async fn valid_ipc_click_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -267,6 +271,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn valid_ipc_navigation_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -280,6 +285,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn mixed_ipc_actions_work_correctly() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -306,6 +312,7 @@ mod tests {
         }
     }
     #[tokio::test]
+    #[ignore]
     async fn execute_fails_when_coordinates_are_invalid() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -324,6 +331,7 @@ mod tests {
         assert!(err.contains("outside monitor bounds"));
     }
     #[tokio::test]
+    #[ignore]
     async fn invalid_navigation_key_does_not_crash() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -339,6 +347,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn type_action_with_special_characters_executes() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 

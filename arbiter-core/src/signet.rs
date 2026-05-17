@@ -102,7 +102,7 @@ fn protect_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
     let data_in = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
+        pbData: data.as_ptr().cast_mut(),
     };
     let mut data_out = CRYPT_INTEGER_BLOB {
         cbData: 0,
@@ -111,19 +111,19 @@ fn protect_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
     unsafe {
         CryptProtectData(
-            &data_in,
+            &raw const data_in,
             None,
             None,
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut data_out,
+            &raw mut data_out,
         )
-        .map_err(|e| format!("DPAPI Protect failed: {}", e))?;
+        .map_err(|e| format!("DPAPI Protect failed: {e}"))?;
 
         let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
         let vec = slice.to_vec();
-        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(data_out.pbData as _));
+        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(data_out.pbData.cast()));
         Ok(vec)
     }
 }
@@ -138,7 +138,7 @@ fn unprotect_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
     let data_in = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
+        pbData: data.as_ptr().cast_mut(),
     };
     let mut data_out = CRYPT_INTEGER_BLOB {
         cbData: 0,
@@ -147,19 +147,19 @@ fn unprotect_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
     unsafe {
         CryptUnprotectData(
-            &data_in,
+            &raw const data_in,
             None,
             None,
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut data_out,
+            &raw mut data_out,
         )
-        .map_err(|e| format!("DPAPI Unprotect failed: {}", e))?;
+        .map_err(|e| format!("DPAPI Unprotect failed: {e}"))?;
 
         let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
         let vec = slice.to_vec();
-        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(data_out.pbData as _));
+        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(data_out.pbData.cast()));
         Ok(vec)
     }
 }
@@ -250,8 +250,10 @@ fn secure_canonicalize(path: &Path) -> PathBuf {
     } else {
         path.parent()
             .and_then(|p| std::fs::canonicalize(p).ok())
-            .map(|p| p.join(path.file_name().unwrap_or_default()))
-            .unwrap_or_else(|| path.to_path_buf())
+            .map_or_else(
+                || path.to_path_buf(),
+                |p| p.join(path.file_name().unwrap_or_default()),
+            )
     }
 }
 
@@ -330,13 +332,13 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
                 REG_OPTION_NON_VOLATILE,
                 KEY_WRITE,
                 None,
-                &mut hkey,
+                &raw mut hkey,
                 None,
             )
         };
 
         if status.is_err() {
-            return Err(format!("Signet: failed to open registry key: {:?}", status));
+            return Err(format!("Signet: failed to open registry key: {status:?}"));
         }
 
         let result = if enabled {
@@ -364,7 +366,7 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
                     0,
                     REG_SZ,
                     Some(std::slice::from_raw_parts(
-                        path_hstring.as_ptr() as *const u8,
+                        path_hstring.as_ptr().cast::<u8>(),
                         (path_hstring.len() * 2) + 2,
                     )),
                 )
@@ -380,7 +382,7 @@ pub fn sync_startup_registry(enabled: bool) -> Result<(), String> {
 
         if result.is_err() && result.0 != 2 {
             // 2 = ERROR_FILE_NOT_FOUND, which is fine when deleting
-            return Err(format!("Signet: registry operation failed: {:?}", result));
+            return Err(format!("Signet: registry operation failed: {result:?}"));
         }
         Ok(())
     }

@@ -51,7 +51,7 @@ fn generate_step_id() -> String {
         .unwrap_or_default()
         .as_secs();
     let n = STEP_CTR.fetch_add(1, Ordering::Relaxed);
-    format!("step-{}-{}", epoch, n)
+    format!("step-{epoch}-{n}")
 }
 
 async fn send_command(cmd: &ForgeCommand) {
@@ -77,7 +77,7 @@ async fn send_command(cmd: &ForgeCommand) {
                 time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
                 tag: "IPC".into(),
                 tag_color: Color::from_rgb_u8(244, 63, 94),
-                msg: format!("IPC Failure: {}", e).into(),
+                msg: format!("IPC Failure: {e}").into(),
                 decree_id: "".into(),
             });
         });
@@ -178,7 +178,7 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
                         args: step
                             .arg_b
                             .split_whitespace()
-                            .map(|s| s.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect(),
                         detached: true,
                     },
@@ -382,19 +382,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = ArbiterForge::new()?;
     let ui_handle = ui.as_weak();
 
-    let log_model = LOG_MODEL.with(|m| m.clone());
-    let decree_model = DECREE_MODEL.with(|m| m.clone());
-    let step_model = STEP_MODEL.with(|m| m.clone());
-    let ward_model = WARD_MODEL.with(|m| m.clone());
-    let ts_path_model = TS_PATH_MODEL.with(|m| m.clone());
-    let baton_model = BATON_MODEL.with(|m| m.clone());
+    let log_model = LOG_MODEL.with(std::clone::Clone::clone);
+    let decree_model = DECREE_MODEL.with(std::clone::Clone::clone);
+    let step_model = STEP_MODEL.with(std::clone::Clone::clone);
+    let ward_model = WARD_MODEL.with(std::clone::Clone::clone);
+    let ts_path_model = TS_PATH_MODEL.with(std::clone::Clone::clone);
+    let baton_model = BATON_MODEL.with(std::clone::Clone::clone);
 
     ui.set_telemetry_logs(ModelRc::from(log_model.clone()));
     ui.set_decree_list(ModelRc::from(decree_model.clone()));
     ui.set_decree_steps(ModelRc::from(step_model.clone()));
-    ui.set_ward_list(ModelRc::from(ward_model.clone()));
-    ui.set_trusted_paths(ModelRc::from(ts_path_model.clone()));
-    ui.set_baton_allowed(ModelRc::from(baton_model.clone()));
+    ui.set_ward_list(ModelRc::from(ward_model));
+    ui.set_trusted_paths(ModelRc::from(ts_path_model));
+    ui.set_baton_allowed(ModelRc::from(baton_model));
 
     sync_ledger_to_ui();
     sync_signet_to_ui(&ui);
@@ -428,12 +428,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let watchdog_duration = Duration::from_secs(2);
 
         loop {
-            let client = match ClientOptions::new().open(PIPE_TELEMETRY) {
-                Ok(c) => c,
-                Err(_) => {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
+            let client = if let Ok(c) = ClientOptions::new().open(PIPE_TELEMETRY) {
+                c
+            } else {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
             };
 
             let mut framed =
@@ -585,8 +584,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                if let Some(existing) = ledger.decrees.iter_mut().find(|d| d.id == def.id) {
-                    *existing = def.clone();
+                if let Some(existing) = ledger.decrees.iter_mut().find(|o| o.id == def.id) {
+                    existing.clone_from(&def);
                 } else {
                     ledger.decrees.push(def.clone());
                 }
@@ -617,7 +616,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
                             tag: "VALIDATE".into(),
                             tag_color: Color::from_rgb_u8(244, 63, 94),
-                            msg: format!("Validation Error: {}", e).into(),
+                            msg: format!("Validation Error: {e}").into(),
                             decree_id: "".into(),
                         });
                     });
@@ -627,9 +626,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let key = match &def.summons {
                     SummonsDef::FileCreated {
                         ward_id, pattern, ..
-                    } => format!("FileCreated|{}|{}", ward_id, pattern),
-                    SummonsDef::Hotkey { combo } => format!("Hotkey|{}", combo),
-                    SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{}", name),
+                    } => format!("FileCreated|{ward_id}|{pattern}"),
+                    SummonsDef::Hotkey { combo } => format!("Hotkey|{combo}"),
+                    SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{name}"),
                     SummonsDef::Clipboard => "Clipboard".to_string(),
                     SummonsDef::Manual => "Manual".to_string(),
                 };
@@ -647,7 +646,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_new_decree({
-        let decree_model = decree_model.clone();
+        let decree_model = decree_model;
         let step_model = step_model.clone();
         let ui_handle = ui_handle.clone();
         move || {
@@ -771,19 +770,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         ActionType::Type(s) => (
                                             2,
                                             s.clone(),
-                                            "".to_string(),
+                                            String::new(),
                                             "Synthetic: emit keys".to_string(),
                                         ),
                                         ActionType::Wait(ms) => (
                                             3,
                                             ms.to_string(),
-                                            "".to_string(),
+                                            String::new(),
                                             "Steady Wait".to_string(),
                                         ),
                                         ActionType::Navigate(s) => {
-                                            (4, s.clone(), "".to_string(), "Navigate".to_string())
+                                            (4, s.clone(), String::new(), "Navigate".to_string())
                                         }
-                                        _ => (5, "".to_string(), "".to_string(), "".to_string()),
+                                        _ => (5, String::new(), String::new(), String::new()),
                                     };
 
                                     incoming_steps.push(DecreeStep {
@@ -836,9 +835,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 row.subtext = "Inscribe: Move Mode".into();
                             }
                         } else {
-                            row.title = title.clone();
-                            row.arg_a = a.clone();
-                            row.arg_b = b.clone();
+                            row.title = title;
+                            row.arg_a = a;
+                            row.arg_b = b;
                         }
                         step_model.set_row_data(i, row);
                         break;
@@ -935,7 +934,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_remove_step({
-        let step_model = step_model.clone();
+        let step_model = step_model;
         move |step_id| {
             info!(step_id = %step_id, "Forge: remove-step");
             for i in 0..step_model.row_count() {
@@ -990,7 +989,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
 
-    let ward_model_cb = WARD_MODEL.with(|m| m.clone());
+    let ward_model_cb = WARD_MODEL.with(std::clone::Clone::clone);
     ui.on_add_ward({
         let ward_model_cb = ward_model_cb.clone();
         move || {
@@ -1079,7 +1078,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let ts_path_model_cb = TS_PATH_MODEL.with(|m| m.clone());
+    let ts_path_model_cb = TS_PATH_MODEL.with(std::clone::Clone::clone);
     ui.on_add_trusted_path({
         let ts_path_model_cb = ts_path_model_cb.clone();
         move || {
@@ -1105,7 +1104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let baton_model_cb = BATON_MODEL.with(|m| m.clone());
+    let baton_model_cb = BATON_MODEL.with(std::clone::Clone::clone);
     ui.on_add_baton({
         let baton_model_cb = baton_model_cb.clone();
         move || {
@@ -1152,7 +1151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_save_wards({
-        let ward_model_cb = ward_model_cb.clone();
+        let ward_model_cb = ward_model_cb;
         move || {
             let mut wards = Vec::new();
             let mut seen_paths = std::collections::HashSet::new();
@@ -1197,9 +1196,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_save_signet({
-        let ts_path_model_cb = ts_path_model_cb.clone();
-        let baton_model_cb = baton_model_cb.clone();
-        let ui_handle = ui_handle.clone();
+        let ts_path_model_cb = ts_path_model_cb;
+        let baton_model_cb = baton_model_cb;
+        let ui_handle = ui_handle;
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 let mut trusted_paths = std::collections::HashSet::new();

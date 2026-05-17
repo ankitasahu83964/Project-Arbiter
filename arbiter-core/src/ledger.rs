@@ -33,7 +33,7 @@ pub enum LedgerError {
 
 impl From<std::io::Error> for LedgerError {
     fn from(e: std::io::Error) -> Self {
-        LedgerError::ReadFailed(e.to_string())
+        Self::ReadFailed(e.to_string())
     }
 }
 
@@ -79,7 +79,7 @@ fn resolve_dynamic_paths(path: &str) -> String {
 
     if expanded.starts_with("~/") || expanded.starts_with("~\\") {
         if let Some(home) = dirs::home_dir() {
-            expanded = expanded.replacen("~", &home.to_string_lossy(), 1);
+            expanded = expanded.replacen('~', &home.to_string_lossy(), 1);
         }
     }
 
@@ -172,7 +172,7 @@ impl Default for ArbiterLedger {
     }
 }
 
-fn default_ledger_version() -> u32 {
+const fn default_ledger_version() -> u32 {
     1
 }
 
@@ -263,7 +263,7 @@ pub enum SummonsDef {
     Manual,
 }
 
-fn default_recursive() -> bool {
+const fn default_recursive() -> bool {
     true
 }
 

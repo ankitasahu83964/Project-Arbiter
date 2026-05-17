@@ -36,7 +36,7 @@ impl std::fmt::Display for DecreeId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Represents supported automation actions.
 pub enum ActionType {
     Click,
@@ -64,14 +64,14 @@ pub enum ActionType {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Represents screen coordinates.
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Represents an executable automation action.
 pub struct Action {
     pub action_type: ActionType,
@@ -119,7 +119,7 @@ pub enum NodeKind {
     Trigger,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind")]
 /// Represents the runtime state of a decree node.
 pub enum NodeState {
@@ -182,7 +182,7 @@ impl<'de> serde::Deserialize<'de> for DecreeNode {
             }
         };
 
-        Ok(DecreeNode {
+        Ok(Self {
             id: raw.id,
             label: raw.label,
             state,
@@ -226,7 +226,7 @@ impl serde::Serialize for DecreeNode {
 }
 
 impl DecreeNode {
-    pub fn kind(&self) -> NodeKind {
+    pub const fn kind(&self) -> NodeKind {
         match self.state {
             NodeState::Action { .. } => NodeKind::Action,
             NodeState::Empty => NodeKind::Entry,
@@ -266,10 +266,10 @@ impl Summons {
                 ..
             } => format!("FileCreated|{}|{}", watch_path.display(), pattern),
             #[cfg(feature = "vigil-keys")]
-            Self::Hotkey { combo, .. } => format!("Hotkey|{}", combo),
+            Self::Hotkey { combo, .. } => format!("Hotkey|{combo}"),
             #[cfg(feature = "vigil-clipboard")]
             Self::Clipboard { .. } => "Clipboard".to_string(),
-            Self::ProcessAppeared { name, .. } => format!("ProcessAppeared|{}", name),
+            Self::ProcessAppeared { name, .. } => format!("ProcessAppeared|{name}"),
             Self::Manual { .. } => "Manual".to_string(),
         }
     }
@@ -316,7 +316,7 @@ pub enum EnvKey {
 }
 
 impl EnvKey {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::FileDir => "file_dir",
             Self::FilePath => "file_path",
@@ -388,7 +388,7 @@ impl EnvKey {
         }
     }
 
-    pub fn is_analytical(&self) -> bool {
+    pub const fn is_analytical(&self) -> bool {
         matches!(
             self,
             Self::ContentSha256
@@ -600,7 +600,7 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
             -p * p.log2()
         })
         .sum();
-    Some(format!("{:.4}", entropy))
+    Some(format!("{entropy:.4}"))
 }
 
 #[cfg(not(feature = "vigil-deep"))]

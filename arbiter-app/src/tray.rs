@@ -230,7 +230,7 @@ pub fn run_event_loop(
                         icons.idle.clone()
                     };
                     let _ = tray.set_icon(Some(icon));
-                    let _ = tray.set_tooltip(Some(format!("Arbiter — {}", msg)));
+                    let _ = tray.set_tooltip(Some(format!("Arbiter — {msg}")));
                 }
                 TrayAppEvent::Shutdown => {
                     info!("Tray: engine-initiated shutdown — killing children");

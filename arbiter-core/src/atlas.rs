@@ -210,7 +210,7 @@ impl Atlas {
                             .insert(summons_key.clone(), g.compile_matcher());
                     }
                     Err(e) => {
-                        warn!(%e, %pattern, "Atlas: could not pre-compile glob, fuzzy match disabled for this decree")
+                        warn!(%e, %pattern, "Atlas: could not pre-compile glob, fuzzy match disabled for this decree");
                     }
                 }
             }
@@ -245,13 +245,17 @@ impl Atlas {
                         debug!(%id, "Atlas: stopping watcher on shutdown");
                         let _ = tx.send(());
                     }
+                    #[cfg(feature = "vigil-keys")]
+                    {
+                        let _ = crate::vigil::keys::unregister_all_hotkeys();
+                    }
                     if let Some(tx) = self.active_abort.take() {
                         let _ = tx.send(());
                     }
                     break;
                 }
 
-                Some(_) = reset_rx.recv() => {
+                Some(()) = reset_rx.recv() => {
                     match self.state {
                         EngineState::Executing => self.reset_state(&log_broadcast, "Active sequence aborted by manual reset."),
                         EngineState::Faulted => self.reset_state(&log_broadcast, "Engine fault cleared manually."),
@@ -289,6 +293,10 @@ impl Atlas {
 
                             // Update or insert
                             if let Some(existing) = ledger.decrees.iter_mut().find(|o| o.id == def.id) {
+                                #[cfg(feature = "vigil-keys")]
+                                if let crate::ledger::SummonsDef::Hotkey { combo } = &existing.summons {
+                                    let _ = crate::vigil::keys::unregister_hotkey(combo.clone());
+                                }
                                 *existing = def.clone();
                             } else {
                                 ledger.decrees.push(def.clone());
@@ -361,7 +369,7 @@ impl Atlas {
                                     }
                                 }
                                 crate::ledger::SummonsDef::ProcessAppeared { name } => {
-                                    let proc_key = format!("proc:{}", name);
+                                    let proc_key = format!("proc:{name}");
                                     match self.active_watchers.entry(proc_key) {
                                         std::collections::hash_map::Entry::Vacant(e) => {
                                             info!(%name, "Atlas: spawning new process watcher");
@@ -488,12 +496,17 @@ impl Atlas {
                                 let removed = ledger.decrees.remove(pos);
                                 let _ = crate::ledger::save(&ledger);
 
+                                #[cfg(feature = "vigil-keys")]
+                                if let crate::ledger::SummonsDef::Hotkey { combo } = &removed.summons {
+                                    let _ = crate::vigil::keys::unregister_hotkey(combo.clone());
+                                }
+
                                 let key = match removed.summons {
                                     crate::ledger::SummonsDef::FileCreated { ward_id, pattern, .. } => {
                                         format!("FileCreated|{}|{}", normalize_windows_path(&ward_id), pattern)
                                     }
-                                    crate::ledger::SummonsDef::Hotkey { combo } => format!("Hotkey|{}", combo),
-                                    crate::ledger::SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{}", name),
+                                    crate::ledger::SummonsDef::Hotkey { combo } => format!("Hotkey|{combo}"),
+                                    crate::ledger::SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{name}"),
                                     crate::ledger::SummonsDef::Clipboard => "Clipboard".to_string(),
                                     crate::ledger::SummonsDef::Manual => "Manual".to_string(),
                                 };
@@ -503,7 +516,7 @@ impl Atlas {
                                 let _ = log_broadcast.send(LogEntry {
                                     time: chrono::Utc::now().to_rfc3339(),
                                     tag: "ATLAS".into(),
-                                    message: format!("Decree '{}' removed and saved.", decree_id),
+                                    message: format!("Decree '{decree_id}' removed and saved."),
                                     is_error: false,
                                     decree_id: Some(decree_id),
                                 });
@@ -518,12 +531,12 @@ impl Atlas {
                                 crate::ledger::ArbiterLedger::default()
                             });
                             if let Some(ord) = ledger.decrees.iter_mut().find(|d| d.id.0 == decree_id) {
-                                ord.label = label.clone();
+                                ord.label.clone_from(&label);
                                 let _ = crate::ledger::save(&ledger);
                                 let _ = log_broadcast.send(LogEntry {
                                     time: chrono::Utc::now().to_rfc3339(),
                                     tag: "ATLAS".into(),
-                                    message: format!("Decree '{}' renamed and saved.", decree_id),
+                                    message: format!("Decree '{decree_id}' renamed and saved."),
                                     is_error: false,
                                     decree_id: Some(decree_id),
                                 });
@@ -623,7 +636,7 @@ impl Atlas {
         info!(%key, "Atlas: dispatching sequence");
         self.active_decree_id = Some(DecreeId(key.clone()));
 
-        let msg = format!("Summons matched: {}", key);
+        let msg = format!("Summons matched: {key}");
         push_log(
             &self.engine_logs,
             "ATLAS",
@@ -650,7 +663,7 @@ impl Atlas {
         if let Some(p) = context.variables.get("file_path") {
             let component_count = p.split(['/', '\\']).count();
             if component_count > 20 {
-                let msg = format!("MAX_RECURSION_DEPTH exceeded ({} > 20) for path '{}'. Aborting to prevent path explosion.", component_count, p);
+                let msg = format!("MAX_RECURSION_DEPTH exceeded ({component_count} > 20) for path '{p}'. Aborting to prevent path explosion.");
                 error!(%p, "Atlas: {}", msg);
                 let _ = log_broadcast.send(LogEntry {
                     time: chrono::Utc::now().to_rfc3339(),
@@ -681,7 +694,7 @@ impl Atlas {
             let _ = log_broadcast.send(LogEntry {
                 time: chrono::Utc::now().to_rfc3339(),
                 tag: "ATLAS".into(),
-                message: format!("Failed to dispatch sequence to Runner: {}", e),
+                message: format!("Failed to dispatch sequence to Runner: {e}"),
                 is_error: true,
                 decree_id: self.active_decree_id.as_ref().map(|id| id.0.clone()),
             });

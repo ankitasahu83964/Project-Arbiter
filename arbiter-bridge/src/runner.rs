@@ -120,10 +120,10 @@ fn get_idle_secs() -> u64 {
         dwTime: 0,
     };
     unsafe {
-        if GetLastInputInfo(&mut lii).as_bool() {
+        if GetLastInputInfo(&raw mut lii).as_bool() {
             let now = GetTickCount();
             // wrapping_sub handles the u32 DWORD tick counter rollover (~49 days).
-            (now.wrapping_sub(lii.dwTime) / 1000) as u64
+            u64::from(now.wrapping_sub(lii.dwTime) / 1000)
         } else {
             0
         }
@@ -177,12 +177,9 @@ pub fn spawn(
                     time: chrono::Utc::now().to_rfc3339(),
                     tag: "HAND".into(),
                     message: if dry_run {
-                        format!(
-                            "[DRY-RUN] Macro iteration started (Last User Input: {}s ago)",
-                            idle
-                        )
+                        format!("[DRY-RUN] Macro iteration started (Last User Input: {idle}s ago)")
                     } else {
-                        format!("Macro iteration started (Last User Input: {}s ago)", idle)
+                        format!("Macro iteration started (Last User Input: {idle}s ago)")
                     },
                     is_error: false,
                     decree_id: decree_id.as_ref().map(|id| id.0.clone()),
@@ -201,23 +198,23 @@ pub fn spawn(
                     continue;
                 }
 
-                let mut action = match &node.state {
-                    NodeState::Action {
-                        action_type,
-                        point,
-                        delay_ms,
-                    } => Action {
+                let mut action = if let NodeState::Action {
+                    action_type,
+                    point,
+                    delay_ms,
+                } = &node.state
+                {
+                    Action {
                         action_type: action_type.clone(),
                         point: point.clone(),
                         delay_ms: *delay_ms,
-                    },
-                    _ => {
-                        error!(%node.id, "Runner: Expected Action state, found something else");
-                        let _ = event_tx
-                            .send(RunEvent::Panic("Engine halt: Malformed decree data".into()))
-                            .await;
-                        break;
                     }
+                } else {
+                    error!(%node.id, "Runner: Expected Action state, found something else");
+                    let _ = event_tx
+                        .send(RunEvent::Panic("Engine halt: Malformed decree data".into()))
+                        .await;
+                    break;
                 };
 
                 interpolate_action(&mut action.action_type, &context);
@@ -227,10 +224,10 @@ pub fn spawn(
                 }
 
                 if let ActionType::Wait(ms) = action.action_type {
-                    if !dry_run {
-                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-                    } else {
+                    if dry_run {
                         info!("[DRY-RUN] Would wait for {} ms (execution bypassed)", ms);
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                     }
                     let _ = event_tx.send(RunEvent::Progress(idx)).await;
                     continue;
@@ -243,18 +240,18 @@ pub fn spawn(
                     | ActionType::Type(_)
                     | ActionType::Scroll(_)
                     | ActionType::Navigate(_) => {
-                        if !dry_run {
-                            filter.inhibit_presence();
-                            let res = hand.execute(&action).await.map_err(RunnerError::HandError);
-                            filter.resume_presence();
-                            res
-                        } else {
+                        if dry_run {
                             info!(
                                 action = ?action.action_type,
                                 point = ?action.point,
                                "[DRY-RUN] Would execute synthetic action (execution bypassed)"
                             );
                             Ok(())
+                        } else {
+                            filter.inhibit_presence();
+                            let res = hand.execute(&action).await.map_err(RunnerError::HandError);
+                            filter.resume_presence();
+                            res
                         }
                     }
 
@@ -262,48 +259,48 @@ pub fn spawn(
                         source,
                         destination,
                     } => {
-                        if !dry_run {
-                            let r = inscribe::move_file(source, destination, &trusted_roots).await;
-                            if let Ok(ref final_dst) = r {
-                                filter.mark(final_dst);
-                            }
-                            r.map(|_| ()).map_err(RunnerError::from)
-                        } else {
+                        if dry_run {
                             info!(
                                 ?source,
                                 ?destination,
                                 "[DRY-RUN] Would move file (execution bypassed)"
                             );
                             Ok(())
+                        } else {
+                            let r = inscribe::move_file(source, destination, &trusted_roots).await;
+                            if let Ok(ref final_dst) = r {
+                                filter.mark(final_dst);
+                            }
+                            r.map(|_| ()).map_err(RunnerError::from)
                         }
                     }
                     ActionType::InscribeCopy {
                         source,
                         destination,
                     } => {
-                        if !dry_run {
-                            let r = inscribe::copy_file(source, destination, &trusted_roots).await;
-                            if let Ok((ref final_dst, _)) = r {
-                                filter.mark(final_dst);
-                            }
-                            r.map(|_| ()).map_err(RunnerError::from)
-                        } else {
+                        if dry_run {
                             info!(
                                 ?source,
                                 ?destination,
                                 "[DRY-RUN] Would copy file (execution bypassed)"
                             );
                             Ok(())
+                        } else {
+                            let r = inscribe::copy_file(source, destination, &trusted_roots).await;
+                            if let Ok((ref final_dst, _)) = r {
+                                filter.mark(final_dst);
+                            }
+                            r.map(|_| ()).map_err(RunnerError::from)
                         }
                     }
                     ActionType::InscribeDelete { target } => {
-                        if !dry_run {
+                        if dry_run {
+                            info!(?target, "[DRY-RUN] Would delete file (execution bypassed)");
+                            Ok(())
+                        } else {
                             inscribe::delete_file(target, &trusted_roots)
                                 .await
                                 .map_err(RunnerError::from)
-                        } else {
-                            info!(?target, "[DRY-RUN] Would delete file (execution bypassed)");
-                            Ok(())
                         }
                     }
 
@@ -312,8 +309,17 @@ pub fn spawn(
                         args,
                         detached,
                     } => {
-                        if !dry_run {
-                            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                        if dry_run {
+                            info!(
+                                %command,
+                                ?args,
+                                detached = detached,
+                                "[DRY-RUN] Would execute shell command (execution bypassed)"
+                            );
+                            Ok(())
+                        } else {
+                            let arg_refs: Vec<&str> =
+                                args.iter().map(std::string::String::as_str).collect();
                             if *detached {
                                 shell::spawn_detached(
                                     command.as_str(),
@@ -334,14 +340,6 @@ pub fn spawn(
                                 .map(|_| ())
                                 .map_err(RunnerError::from)
                             }
-                        } else {
-                            info!(
-                                %command,
-                                ?args,
-                                detached = detached,
-                                "[DRY-RUN] Would execute shell command (execution bypassed)"
-                            );
-                            Ok(())
                         }
                     }
                     _ => Ok(()),

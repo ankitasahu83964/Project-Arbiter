@@ -163,16 +163,19 @@ pub fn dry_run_walk(root: &Path, pattern: &str) -> DryRunReport {
     let mut affected = Vec::new();
     let mut warnings = Vec::new();
 
-    let matcher: Option<GlobMatcher> = if !pattern.is_empty() {
+    let matcher: Option<GlobMatcher> = if pattern.is_empty() {
+        None
+    } else {
         match Glob::new(pattern) {
             Ok(g) => Some(g.compile_matcher()),
             Err(_) => None,
         }
-    } else {
-        None
     };
 
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
         if entry.file_type().is_file() {
             let name = entry.file_name().to_string_lossy();
 
@@ -240,7 +243,7 @@ mod tests {
         let res = copy_file(&src, &dst, &trusted_roots).await;
         match res {
             Err(InscribeError::NotTrusted(_)) => {}
-            _ => panic!("Expected NotTrusted error, got {:?}", res),
+            _ => panic!("Expected NotTrusted error, got {res:?}"),
         }
         assert!(!dst.exists());
     }

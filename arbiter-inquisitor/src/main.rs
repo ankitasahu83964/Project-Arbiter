@@ -37,9 +37,15 @@ impl InquisitorApp {
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.style()).clone();
-        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::monospace(14.0));
-        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::monospace(18.0));
-        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::monospace(14.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::monospace(14.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, egui::FontId::monospace(18.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::monospace(14.0));
         ctx.set_style(style);
 
         std::thread::spawn(move || {
@@ -56,9 +62,15 @@ impl InquisitorApp {
                         while let Some(Ok(bytes)) = framed.next().await {
                             if let Ok(mut entry) = rmp_serde::from_slice::<LogEntry>(&bytes) {
                                 if entry.time.is_empty() {
-                                    entry.time = chrono::Local::now().format("%H:%M:%S").to_string();
-                                } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&entry.time) {
-                                    entry.time = dt.with_timezone(&chrono::Local).format("%H:%M:%S").to_string();
+                                    entry.time =
+                                        chrono::Local::now().format("%H:%M:%S").to_string();
+                                } else if let Ok(dt) =
+                                    chrono::DateTime::parse_from_rfc3339(&entry.time)
+                                {
+                                    entry.time = dt
+                                        .with_timezone(&chrono::Local)
+                                        .format("%H:%M:%S")
+                                        .to_string();
                                 }
 
                                 let mut logs = logs_clone.lock().unwrap();
@@ -127,7 +139,11 @@ impl eframe::App for InquisitorApp {
                             body.rows(18.0, logs.len(), |mut row| {
                                 let log = &logs[row.index()];
                                 row.col(|ui| {
-                                    ui.label(egui::RichText::new(&log.time).color(egui::Color32::GRAY).small());
+                                    ui.label(
+                                        egui::RichText::new(&log.time)
+                                            .color(egui::Color32::GRAY)
+                                            .small(),
+                                    );
                                 });
                                 row.col(|ui| {
                                     let color = match log.tag.as_str() {
@@ -137,7 +153,9 @@ impl eframe::App for InquisitorApp {
                                         "PRESN" => Palette::ERROR,
                                         _ => egui::Color32::LIGHT_GRAY,
                                     };
-                                    ui.label(egui::RichText::new(&log.tag).color(color).strong().small());
+                                    ui.label(
+                                        egui::RichText::new(&log.tag).color(color).strong().small(),
+                                    );
                                 });
                                 row.col(|ui| {
                                     let text_color = if log.is_error {
@@ -145,7 +163,9 @@ impl eframe::App for InquisitorApp {
                                     } else {
                                         egui::Color32::LIGHT_GRAY
                                     };
-                                    ui.label(egui::RichText::new(&log.message).color(text_color).small());
+                                    ui.label(
+                                        egui::RichText::new(&log.message).color(text_color).small(),
+                                    );
                                 });
                             });
                         });

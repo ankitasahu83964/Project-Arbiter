@@ -13,7 +13,7 @@ impl Palette {
     const SUCCESS: egui::Color32 = egui::Color32::from_rgb(16, 185, 129);
     const WARN: egui::Color32 = egui::Color32::from_rgb(245, 158, 11);
     const ERROR: egui::Color32 = egui::Color32::from_rgb(244, 63, 94);
-    //const SYSTEM: egui::Color32 = egui::Color32::from_rgb(99, 102, 241);
+    const SYSTEM: egui::Color32 = egui::Color32::from_rgb(99, 102, 241);
 }
 
 struct InquisitorApp {
@@ -107,7 +107,6 @@ impl InquisitorApp {
 
 impl eframe::App for InquisitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // ===================== SANDBOX (RIGHT PANEL) =====================
         egui::SidePanel::right("sandbox_panel")
             .default_width(320.0)
             .show(ctx, |ui| {

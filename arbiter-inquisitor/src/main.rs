@@ -13,7 +13,7 @@ impl Palette {
     const SUCCESS: egui::Color32 = egui::Color32::from_rgb(16, 185, 129);
     const WARN: egui::Color32 = egui::Color32::from_rgb(245, 158, 11);
     const ERROR: egui::Color32 = egui::Color32::from_rgb(244, 63, 94);
-    //const SYSTEM: egui::Color32 = egui::Color32::from_rgb(99, 102, 241);
+    const SYSTEM: egui::Color32 = egui::Color32::from_rgb(99, 102, 241);
 }
 
 struct InquisitorApp {
@@ -37,6 +37,21 @@ impl InquisitorApp {
         visuals.panel_fill = egui::Color32::from_rgb(10, 10, 10);
         visuals.window_shadow = epaint::Shadow::NONE;
         ctx.set_visuals(visuals);
+        let mut style = (*ctx.style()).clone();
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::monospace(14.0));
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, egui::FontId::monospace(18.0));
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::monospace(14.0));
+
+        ctx.set_style(style);
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -56,8 +71,14 @@ impl InquisitorApp {
                                 if entry.time.is_empty() {
                                     entry.time =
                                         chrono::Local::now().format("%H:%M:%S").to_string();
+                                } else if let Ok(dt) =
+                                    chrono::DateTime::parse_from_rfc3339(&entry.time)
+                                {
+                                    entry.time = dt
+                                        .with_timezone(&chrono::Local)
+                                        .format("%H:%M:%S")
+                                        .to_string();
                                 }
-
                                 let mut logs = logs_clone.lock().unwrap();
                                 logs.push(entry);
 
@@ -113,7 +134,7 @@ impl eframe::App for InquisitorApp {
                 ui.heading(
                     egui::RichText::new("INQUISITOR SANDBOX")
                         .strong()
-                        .color(egui::Color32::from_rgb(120, 200, 255)),
+                        .color(Palette::SYSTEM),
                 );
 
                 ui.separator();
@@ -164,9 +185,9 @@ impl eframe::App for InquisitorApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new("ARBITER INQUISITOR")
+                    egui::RichText::new("ARBITER INQUISITOR // VIVISECTION TABLE")
                         .strong()
-                        .color(egui::Color32::from_rgb(100, 100, 255)),
+                        .color(Palette::SYSTEM),
                 );
 
                 if ui.button("CLEAR").clicked() {
@@ -205,15 +226,32 @@ impl eframe::App for InquisitorApp {
                                 let log = &logs[row.index()];
 
                                 row.col(|ui| {
-                                    ui.label(&log.time);
+                                    ui.label(egui::RichText::new(&log.time).monospace().small());
                                 });
 
                                 row.col(|ui| {
-                                    ui.label(&log.tag);
+                                    let color = match log.tag.as_str() {
+                                        "ATLAS" => Palette::WARN,
+                                        "VIGIL" | "Vigil-fs" => Palette::SYSTEM,
+                                        "RUNNER" | "Runner" => Palette::SUCCESS,
+                                        "PRESN" => Palette::ERROR,
+                                        _ => egui::Color32::LIGHT_GRAY,
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(&log.tag).color(color).strong().small(),
+                                    );
                                 });
 
                                 row.col(|ui| {
-                                    ui.label(&log.message);
+                                    let text_color = if log.is_error {
+                                        Palette::ERROR
+                                    } else {
+                                        egui::Color32::LIGHT_GRAY
+                                    };
+
+                                    ui.label(
+                                        egui::RichText::new(&log.message).color(text_color).small(),
+                                    );
                                 });
                             });
                         });

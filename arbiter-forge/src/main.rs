@@ -13,6 +13,7 @@ use arbiter_core::decree::{
     Action, ActionType, DecreeId, DecreeNode, NodeId, NodeKind, PresenceConfig,
 };
 use arbiter_core::ledger::SummonsDef;
+use arbiter_core::normalize_windows_path;
 use arbiter_core::protocol::ForgeCommand;
 
 thread_local! {
@@ -52,19 +53,6 @@ fn generate_step_id() -> String {
         .as_secs();
     let n = STEP_CTR.fetch_add(1, Ordering::Relaxed);
     format!("step-{epoch}-{n}")
-}
-
-fn normalize_windows_path(path: &str) -> String {
-    fn is_drive_root(p: &str) -> bool {
-        let b = p.as_bytes();
-        b.len() == 3 && b[1] == b':' && b[2] == b'\\'
-    }
-
-    let mut out = path.trim().replace('/', "\\");
-    while out.ends_with('\\') && !is_drive_root(&out) {
-        out.pop();
-    }
-    out
 }
 
 fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef {

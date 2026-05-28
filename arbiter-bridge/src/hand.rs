@@ -176,12 +176,12 @@ impl Drop for HardwareBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arbiter_core::decree::{Action, ActionType};
+    use arbiter_core::decree::{Action, ActionType, Point};
 
     #[tokio::test]
     async fn coordinate_guard_rejects_out_of_bounds() {
         let bridge = HardwareBridge::new(1920, 1080);
-        // Direct call to the guard — no enigo interaction
+
         assert!(bridge.validate_coordinate(2000, 500).is_err());
         assert!(bridge.validate_coordinate(-1, 0).is_err());
         assert!(bridge.validate_coordinate(960, 540).is_ok());
@@ -190,11 +190,166 @@ mod tests {
     #[tokio::test]
     async fn wait_action_does_not_need_coordinates() {
         let mut bridge = HardwareBridge::new(1920, 1080);
+
         let action = Action {
             action_type: ActionType::Wait(10),
             point: None,
             delay_ms: 0,
         };
+
         assert!(bridge.execute(&action).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn coordinate_guard_accepts_boundary_values() {
+        let bridge = HardwareBridge::new(1920, 1080);
+
+        assert!(bridge.validate_coordinate(0, 0).is_ok());
+        assert!(bridge.validate_coordinate(1920, 1080).is_ok());
+    }
+
+    #[tokio::test]
+    async fn coordinate_guard_rejects_negative_values() {
+        let bridge = HardwareBridge::new(1920, 1080);
+
+        assert!(bridge.validate_coordinate(-100, 200).is_err());
+        assert!(bridge.validate_coordinate(200, -50).is_err());
+    }
+
+    #[tokio::test]
+    async fn coordinate_guard_rejects_values_beyond_screen() {
+        let bridge = HardwareBridge::new(1920, 1080);
+
+        assert!(bridge.validate_coordinate(2500, 100).is_err());
+        assert!(bridge.validate_coordinate(100, 2000).is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_invalid_coordinates_before_input_execution() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Click,
+            point: Some(Point { x: 5000, y: 5000 }),
+            delay_ms: 0,
+        };
+
+        let result = bridge.execute(&action).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn empty_type_action_returns_ok() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Type(String::new()),
+            point: None,
+            delay_ms: 0,
+        };
+
+        assert!(bridge.execute(&action).await.is_ok());
+    }
+    // ---------------- NEW IPC STATE TRANSITION TESTS ----------------
+
+    #[tokio::test]
+    async fn valid_ipc_click_flow_executes_successfully() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Click,
+            point: Some(Point { x: 100, y: 100 }),
+            delay_ms: 0,
+        };
+
+        assert!(bridge.execute(&action).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn valid_ipc_navigation_flow_executes_successfully() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Navigate("ctrl+c".to_string()),
+            point: Some(Point { x: 50, y: 50 }),
+            delay_ms: 0,
+        };
+
+        assert!(bridge.execute(&action).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn mixed_ipc_actions_work_correctly() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let actions = vec![
+            Action {
+                action_type: ActionType::Click,
+                point: Some(Point { x: 10, y: 10 }),
+                delay_ms: 0,
+            },
+            Action {
+                action_type: ActionType::Type("hi".to_string()),
+                point: None,
+                delay_ms: 0,
+            },
+            Action {
+                action_type: ActionType::Scroll(5),
+                point: None,
+                delay_ms: 0,
+            },
+        ];
+
+        for action in actions {
+            assert!(bridge.execute(&action).await.is_ok());
+        }
+    }
+    #[tokio::test]
+    async fn execute_fails_when_coordinates_are_invalid() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::RightClick,
+            point: Some(Point { x: 99999, y: 99999 }),
+            delay_ms: 0,
+        };
+
+        let result = bridge.execute(&action).await;
+
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+
+        assert!(err.contains("outside monitor bounds"));
+    }
+    #[tokio::test]
+    async fn invalid_navigation_key_does_not_crash() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Navigate("ctrl+unknownkey".to_string()),
+            point: None,
+            delay_ms: 0,
+        };
+
+        let result = bridge.execute(&action).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn type_action_with_special_characters_executes() {
+        let mut bridge = HardwareBridge::new(1920, 1080);
+
+        let action = Action {
+            action_type: ActionType::Type("hello\nworld\t!".to_string()),
+            point: None,
+            delay_ms: 0,
+        };
+
+        let result = bridge.execute(&action).await;
+
+        assert!(result.is_ok());
     }
 }

@@ -64,7 +64,7 @@ async fn send_command(cmd: &ForgeCommand) {
 
         let client = ClientOptions::new().open(PIPE_COMMAND)?;
         let mut framed = FramedWrite::new(client, LengthDelimitedCodec::new());
-        let bin = rmp_serde::to_vec(cmd).map_err(std::io::Error::other)?;
+        let bin = rmp_serde::to_vec_named(cmd).map_err(std::io::Error::other)?;
         framed.send(bytes::Bytes::from(bin)).await?;
         Ok::<(), std::io::Error>(())
     }
@@ -607,9 +607,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_simulate_decree({
-        let ui_handle = ui_handle.clone();
+        let _ui_handle = ui_handle.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
+            if let Some(ui) = _ui_handle.upgrade() {
                 let def = collect_decree_from_ui(&ui);
                 if let Err(e) = def.validate() {
                     LOG_MODEL.with(|m| {
@@ -630,6 +630,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } => format!("FileCreated|{}|{}", ward_id, pattern),
                     SummonsDef::Hotkey { combo } => format!("Hotkey|{}", combo),
                     SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{}", name),
+                    SummonsDef::Clipboard => "Clipboard".to_string(),
                     SummonsDef::Manual => "Manual".to_string(),
                 };
                 let save_cmd = ForgeCommand::SaveDecree(def);
@@ -679,135 +680,147 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_select_decree({
         let ui_handle = ui_handle.clone();
+        let _ui_handle = ui_handle.clone();
         move |id| {
             if id.is_empty() {
                 return;
             }
-            if let Some(ui) = ui_handle.upgrade() {
-                // If this is already the active decree, don't reload from disk (prevents wiping unsaved edits)
-                if ui.get_active_decree_id() == id && ui.get_active_decree_status() != 0 {
-                    return;
-                }
-
-                info!(decree_id = %id, "Forge: select-decree");
-                let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
-                    tracing::error!("Forge: Failed to load ledger for selection: {}", e);
-                    arbiter_core::ledger::ArbiterLedger::default()
-                });
-                if let Some(ord) = ledger.decrees.iter().find(|o| id == o.id.0) {
-                    ui.set_active_decree_id(ord.id.0.clone().into());
-                    ui.set_active_decree_label(ord.label.clone().into());
-                    ui.set_active_decree_status(1);
-                    ui.set_selected_step_id("".into());
-                    ui.set_presence_ignore_mouse(ord.presence_config.ignore_mouse);
-                    ui.set_presence_ignore_keyboard(ord.presence_config.ignore_keyboard);
-
-                    ui.set_summons_path("".into());
-                    ui.set_summons_pattern("".into());
-                    ui.set_summons_combo("".into());
-                    ui.set_summons_process("".into());
-
-                    match &ord.summons {
-                        SummonsDef::FileCreated {
-                            ward_id,
-                            pattern,
-                            recursive,
-                        } => {
-                            ui.set_summons_trigger_type(0);
-                            ui.set_summons_path(normalize_windows_path(ward_id).into());
-                            ui.set_summons_pattern(pattern.clone().into());
-                            ui.set_summons_ward_recursive(*recursive);
-                        }
-                        SummonsDef::Hotkey { combo } => {
-                            ui.set_summons_trigger_type(1);
-                            ui.set_summons_combo(combo.clone().into());
-                        }
-                        SummonsDef::ProcessAppeared { name } => {
-                            ui.set_summons_trigger_type(2);
-                            ui.set_summons_process(name.clone().into());
-                        }
-                        SummonsDef::Manual => {
-                            ui.set_summons_trigger_type(3);
-                        }
+            if let Some(_ui) = ui_handle.upgrade() {
+                if let Some(ui) = _ui_handle.upgrade() {
+                    // If this is already the active decree, don't reload from disk (prevents wiping unsaved edits)
+                    if ui.get_active_decree_id() == id && ui.get_active_decree_status() != 0 {
+                        return;
                     }
 
-                    STEP_MODEL.with(|m| {
-                        let mut incoming_steps = Vec::new();
-                        for node in &ord.nodes {
-                            if node.kind() == NodeKind::Action {
-                                if let arbiter_core::decree::NodeState::Action {
-                                    action_type, ..
-                                } = &node.state
-                                {
-                                    let (step_type, arg_a, arg_b, subtext) = match action_type {
-                                        ActionType::InscribeMove {
-                                            source,
-                                            destination,
-                                        } => (
-                                            0,
-                                            source.to_string_lossy().to_string(),
-                                            destination.to_string_lossy().to_string(),
-                                            "Inscribe: Move Mode".to_string(),
-                                        ),
-                                        ActionType::InscribeCopy {
-                                            source,
-                                            destination,
-                                        } => (
-                                            0,
-                                            source.to_string_lossy().to_string(),
-                                            destination.to_string_lossy().to_string(),
-                                            "Inscribe: Copy Mode".to_string(),
-                                        ),
-                                        ActionType::Shell { command, args, .. } => (
-                                            1,
-                                            command.clone(),
-                                            args.join(" "),
-                                            "Shell: execute program".to_string(),
-                                        ),
-                                        ActionType::Type(s) => (
-                                            2,
-                                            s.clone(),
-                                            "".to_string(),
-                                            "Synthetic: emit keys".to_string(),
-                                        ),
-                                        ActionType::Wait(ms) => (
-                                            3,
-                                            ms.to_string(),
-                                            "".to_string(),
-                                            "Steady Wait".to_string(),
-                                        ),
-                                        ActionType::Navigate(s) => {
-                                            (4, s.clone(), "".to_string(), "Navigate".to_string())
-                                        }
-                                        _ => (5, "".to_string(), "".to_string(), "".to_string()),
-                                    };
+                    info!(decree_id = %id, "Forge: select-decree");
+                    let ledger = arbiter_core::ledger::load().unwrap_or_else(|e| {
+                        tracing::error!("Forge: Failed to load ledger for selection: {}", e);
+                        arbiter_core::ledger::ArbiterLedger::default()
+                    });
+                    if let Some(ord) = ledger.decrees.iter().find(|o| id == o.id.0) {
+                        ui.set_active_decree_id(ord.id.0.clone().into());
+                        ui.set_active_decree_label(ord.label.clone().into());
+                        ui.set_active_decree_status(1);
+                        ui.set_selected_step_id("".into());
+                        ui.set_presence_ignore_mouse(ord.presence_config.ignore_mouse);
+                        ui.set_presence_ignore_keyboard(ord.presence_config.ignore_keyboard);
 
-                                    incoming_steps.push(DecreeStep {
-                                        id: node.id.0.clone().into(),
-                                        title: node.label.clone().into(),
-                                        subtext: subtext.into(),
-                                        step_type,
-                                        is_active: false,
-                                        is_running: false,
-                                        baton_required: step_type == 1,
-                                        arg_a: arg_a.into(),
-                                        arg_b: arg_b.into(),
-                                    });
+                        ui.set_summons_path("".into());
+                        ui.set_summons_pattern("".into());
+                        ui.set_summons_combo("".into());
+                        ui.set_summons_process("".into());
+
+                        match &ord.summons {
+                            SummonsDef::FileCreated {
+                                ward_id,
+                                pattern,
+                                recursive,
+                            } => {
+                                ui.set_summons_trigger_type(0);
+                                ui.set_summons_path(normalize_windows_path(ward_id).into());
+                                ui.set_summons_pattern(pattern.clone().into());
+                                ui.set_summons_ward_recursive(*recursive);
+                            }
+                            SummonsDef::Hotkey { combo } => {
+                                ui.set_summons_trigger_type(1);
+                                ui.set_summons_combo(combo.clone().into());
+                            }
+                            SummonsDef::ProcessAppeared { name } => {
+                                ui.set_summons_trigger_type(2);
+                                ui.set_summons_process(name.clone().into());
+                            }
+                            SummonsDef::Clipboard => {
+                                ui.set_summons_trigger_type(4);
+                            }
+                            SummonsDef::Manual => {
+                                ui.set_summons_trigger_type(3);
+                            }
+                        }
+
+                        STEP_MODEL.with(|m| {
+                            let mut incoming_steps = Vec::new();
+                            for node in &ord.nodes {
+                                if node.kind() == NodeKind::Action {
+                                    if let arbiter_core::decree::NodeState::Action {
+                                        action_type,
+                                        ..
+                                    } = &node.state
+                                    {
+                                        let (step_type, arg_a, arg_b, subtext) = match action_type {
+                                            ActionType::InscribeMove {
+                                                source,
+                                                destination,
+                                            } => (
+                                                0,
+                                                source.to_string_lossy().to_string(),
+                                                destination.to_string_lossy().to_string(),
+                                                "Inscribe: Move Mode".to_string(),
+                                            ),
+                                            ActionType::InscribeCopy {
+                                                source,
+                                                destination,
+                                            } => (
+                                                0,
+                                                source.to_string_lossy().to_string(),
+                                                destination.to_string_lossy().to_string(),
+                                                "Inscribe: Copy Mode".to_string(),
+                                            ),
+                                            ActionType::Shell { command, args, .. } => (
+                                                1,
+                                                command.clone(),
+                                                args.join(" "),
+                                                "Shell: execute program".to_string(),
+                                            ),
+                                            ActionType::Type(s) => (
+                                                2,
+                                                s.clone(),
+                                                "".to_string(),
+                                                "Synthetic: emit keys".to_string(),
+                                            ),
+                                            ActionType::Wait(ms) => (
+                                                3,
+                                                ms.to_string(),
+                                                "".to_string(),
+                                                "Steady Wait".to_string(),
+                                            ),
+                                            ActionType::Navigate(s) => (
+                                                4,
+                                                s.clone(),
+                                                "".to_string(),
+                                                "Navigate".to_string(),
+                                            ),
+                                            _ => {
+                                                (5, "".to_string(), "".to_string(), "".to_string())
+                                            }
+                                        };
+
+                                        incoming_steps.push(DecreeStep {
+                                            id: node.id.0.clone().into(),
+                                            title: node.label.clone().into(),
+                                            subtext: subtext.into(),
+                                            step_type,
+                                            is_active: false,
+                                            is_running: false,
+                                            baton_required: step_type == 1,
+                                            arg_a: arg_a.into(),
+                                            arg_b: arg_b.into(),
+                                        });
+                                    }
                                 }
                             }
-                        }
 
-                        while m.row_count() > incoming_steps.len() {
-                            m.remove(m.row_count() - 1);
-                        }
-                        for (i, step) in incoming_steps.into_iter().enumerate() {
-                            if i < m.row_count() {
-                                m.set_row_data(i, step);
-                            } else {
-                                m.push(step);
+                            while m.row_count() > incoming_steps.len() {
+                                m.remove(m.row_count() - 1);
                             }
-                        }
-                    });
+                            for (i, step) in incoming_steps.into_iter().enumerate() {
+                                if i < m.row_count() {
+                                    m.set_row_data(i, step);
+                                } else {
+                                    m.push(step);
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }

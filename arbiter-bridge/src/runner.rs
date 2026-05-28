@@ -249,6 +249,7 @@ pub fn spawn(
                             (execution bypassed)",
                             ms
                         );
+                        info!("[DRY-RUN] Would wait for {} ms (execution bypassed)", ms);
                     }
                     let _ = event_tx.send(RunEvent::Progress(idx)).await;
                     continue;

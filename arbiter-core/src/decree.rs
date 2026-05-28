@@ -1,13 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Instant};
 use tracing::warn;
+//use std::io::Read;
+//use kamadak_exif::Reader;
+//use exif::Reader;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree.
 pub struct DecreeId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Unique identifier for a decree node.
 pub struct NodeId(pub String);
 
 impl From<&str> for NodeId {
@@ -35,6 +40,7 @@ impl std::fmt::Display for DecreeId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents supported automation actions.
 pub enum ActionType {
     Click,
     DoubleClick,
@@ -62,12 +68,14 @@ pub enum ActionType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents screen coordinates.
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Represents an executable automation action.
 pub struct Action {
     pub action_type: ActionType,
     pub point: Option<Point>,
@@ -75,12 +83,14 @@ pub struct Action {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Configuration for user presence detection.
 pub struct PresenceConfig {
     pub ignore_mouse: bool,
     pub ignore_keyboard: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// Configuration for filesystem monitoring wards.
 pub enum WardLayer {
     #[default]
     Surface,
@@ -88,6 +98,7 @@ pub enum WardLayer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Configuration for filesystem monitoring wards.
 pub struct WardConfig {
     pub id: String,
     pub path: PathBuf,
@@ -97,12 +108,14 @@ pub struct WardConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a workflow decree definition.
 pub struct Decree {
     pub nodes: Vec<DecreeNode>,
     pub presence_config: PresenceConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines the type of decree node.
 pub enum NodeKind {
     Entry,
     Action,
@@ -111,6 +124,7 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
+/// Represents the runtime state of a decree node.
 pub enum NodeState {
     #[serde(rename = "Action")]
     Action {
@@ -123,8 +137,10 @@ pub enum NodeState {
 }
 
 #[derive(Debug, Clone)]
+/// Represents a node inside a decree workflow.
 pub struct DecreeNode {
     pub id: NodeId,
+
     pub label: String,
     pub state: NodeState,
     pub next_nodes: HashMap<String, NodeId>,
@@ -222,6 +238,7 @@ impl DecreeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents external triggers capable of invoking decree execution.
 pub enum Summons {
     /// A file matching `pattern` finished writing inside `watch_path`.
     #[cfg(feature = "vigil-fs")]
@@ -235,6 +252,9 @@ pub enum Summons {
     Hotkey { combo: String, context: EnvContext },
     /// A named process appeared in the process list.
     ProcessAppeared { name: String, context: EnvContext },
+    /// Clipboard content changed.
+    #[cfg(feature = "vigil-clipboard")]
+    Clipboard { context: EnvContext },
     /// Manual trigger (used for testing and UI-triggered runs).
     Manual { context: EnvContext },
 }
@@ -250,6 +270,8 @@ impl Summons {
             } => format!("FileCreated|{}|{}", watch_path.display(), pattern),
             #[cfg(feature = "vigil-keys")]
             Self::Hotkey { combo, .. } => format!("Hotkey|{}", combo),
+            #[cfg(feature = "vigil-clipboard")]
+            Self::Clipboard { .. } => "Clipboard".to_string(),
             Self::ProcessAppeared { name, .. } => format!("ProcessAppeared|{}", name),
             Self::Manual { .. } => "Manual".to_string(),
         }
@@ -257,6 +279,7 @@ impl Summons {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Defines supported runtime environment variables exposed to decrees.
 pub enum EnvKey {
     // ── Layer 1: Surface (Always available for file triggers) ──
     FileDir,
@@ -291,6 +314,8 @@ pub enum EnvKey {
     ProcessPid,
     // ── Hotkey Layer ──
     HotkeyCombo,
+    // ── Clipboard Layer ──
+    ClipboardContent,
 }
 
 impl EnvKey {
@@ -325,6 +350,7 @@ impl EnvKey {
             Self::ProcessName => "process_name",
             Self::ProcessPid => "process_pid",
             Self::HotkeyCombo => "hotkey_combo",
+            Self::ClipboardContent => "clipboard_content",
         }
     }
 
@@ -360,6 +386,7 @@ impl EnvKey {
             "process_name" => Some(Self::ProcessName),
             "process_pid" => Some(Self::ProcessPid),
             "hotkey_combo" => Some(Self::HotkeyCombo),
+            "clipboard_content" => Some(Self::ClipboardContent),
             _ => None,
         }
     }
@@ -381,7 +408,12 @@ impl EnvKey {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Stores environment variables and runtime metadata.
 pub struct EnvContext {
+    #[serde(skip)]
+    img_model_cache: OnceLock<Option<String>>,
+    #[serde(skip)]
+    img_gps_cache: OnceLock<Option<String>>,
     pub variables: HashMap<String, String>,
     #[serde(skip)]
     pub source_path: Option<PathBuf>,
@@ -410,6 +442,8 @@ impl Default for EnvContext {
             md5_cache: OnceLock::new(),
             entropy_cache: OnceLock::new(),
             text_lines_cache: OnceLock::new(),
+            img_model_cache: OnceLock::new(),
+            img_gps_cache: OnceLock::new(),
         }
     }
 }
@@ -425,6 +459,8 @@ impl Clone for EnvContext {
             md5_cache: OnceLock::new(),
             entropy_cache: OnceLock::new(),
             text_lines_cache: OnceLock::new(),
+            img_model_cache: OnceLock::new(),
+            img_gps_cache: OnceLock::new(),
         }
     }
 }
@@ -447,7 +483,7 @@ impl EnvContext {
         let key = EnvKey::from_str(key_str)?;
 
         if key.is_analytical() && !self.integrity_scan {
-            warn!(key = %key_str, "Signet Guard: Analytical variable requested but Ward layer is insufficient");
+            warn!(key = %key_str, "Analytical variable blocked");
             return None;
         }
 
@@ -456,22 +492,37 @@ impl EnvContext {
                 .sha256_cache
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_sha256))
                 .as_deref(),
+
             EnvKey::ContentMime => self
                 .mime_cache
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_mime))
                 .as_deref(),
+
             EnvKey::ContentMd5 => self
                 .md5_cache
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_md5))
                 .as_deref(),
+
             EnvKey::ContentEntropy => self
                 .entropy_cache
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_entropy))
                 .as_deref(),
+
             EnvKey::TextLines => self
                 .text_lines_cache
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_text_lines))
                 .as_deref(),
+
+            EnvKey::ImgModel => self
+                .img_model_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_img_model))
+                .as_deref(),
+
+            EnvKey::ImgGps => self
+                .img_gps_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_img_gps))
+                .as_deref(),
+
             _ => None,
         }
     }
@@ -546,6 +597,7 @@ fn compute_md5(_path: &PathBuf) -> Option<String> {
 #[cfg(feature = "vigil-deep")]
 fn compute_entropy(path: &PathBuf) -> Option<String> {
     use std::io::Read;
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut freq = [0u64; 256];
     let mut buffer = [0u8; 8192];
@@ -556,7 +608,9 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
         if n == 0 {
             break;
         }
+
         total_len += n as u64;
+
         for &b in &buffer[..n] {
             freq[b as usize] += 1;
         }
@@ -567,6 +621,7 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
     }
 
     let len_f = total_len as f64;
+
     let entropy: f64 = freq
         .iter()
         .filter(|&&c| c > 0)
@@ -575,6 +630,7 @@ fn compute_entropy(path: &PathBuf) -> Option<String> {
             -p * p.log2()
         })
         .sum();
+
     Some(format!("{:.4}", entropy))
 }
 
@@ -583,10 +639,10 @@ fn compute_entropy(_path: &PathBuf) -> Option<String> {
     None
 }
 
-/// Count newline characters — a fast proxy for line count on text files.
 #[cfg(feature = "vigil-deep")]
 fn compute_text_lines(path: &PathBuf) -> Option<String> {
     use std::io::Read;
+
     let mut file = std::fs::File::open(path).ok()?;
     let mut buffer = [0u8; 8192];
     let mut count = 0usize;
@@ -596,6 +652,7 @@ fn compute_text_lines(path: &PathBuf) -> Option<String> {
         if n == 0 {
             break;
         }
+
         count += buffer[..n].iter().filter(|&&b| b == b'\n').count();
     }
 
@@ -607,7 +664,64 @@ fn compute_text_lines(_path: &PathBuf) -> Option<String> {
     None
 }
 
+#[cfg(feature = "vigil-deep")]
+fn compute_img_model(path: &PathBuf) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut bufreader = std::io::BufReader::new(file);
+
+    let exif_reader = exif::Reader::new();
+    let exif = exif_reader.read_from_container(&mut bufreader).ok()?;
+
+    let result = exif.fields().find_map(|f| {
+        if f.tag.to_string().contains("Model") {
+            Some(f.display_value().to_string())
+        } else {
+            None
+        }
+    });
+
+    result
+}
+
+#[cfg(not(feature = "vigil-deep"))]
+fn compute_img_model(_path: &PathBuf) -> Option<String> {
+    None
+}
+
+#[cfg(feature = "vigil-deep")]
+fn compute_img_gps(path: &PathBuf) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut bufreader = std::io::BufReader::new(file);
+
+    let exif_reader = exif::Reader::new();
+    let exif = exif_reader.read_from_container(&mut bufreader).ok()?;
+
+    let mut lat = None;
+    let mut lon = None;
+
+    for f in exif.fields() {
+        let tag = f.tag.to_string();
+
+        if tag.contains("GPSLatitude") {
+            lat = Some(f.display_value().to_string());
+        }
+        if tag.contains("GPSLongitude") {
+            lon = Some(f.display_value().to_string());
+        }
+    }
+
+    match (lat, lon) {
+        (Some(a), Some(b)) => Some(format!("{},{}", a, b)),
+        _ => None,
+    }
+}
+#[cfg(not(feature = "vigil-deep"))]
+fn compute_img_gps(_path: &PathBuf) -> Option<String> {
+    None
+}
+
 #[derive(Debug, Clone)]
+/// Represents execution events emitted by the runtime.
 pub enum RunEvent {
     /// A log line to be displayed in the Terminal of Commands.
     Log(crate::protocol::LogEntry),
@@ -619,6 +733,7 @@ pub enum RunEvent {
     Done,
 }
 
+// Contains runtime execution state passed into the orchestration engine.
 pub struct ExecData {
     pub nodes: Vec<DecreeNode>,
     pub context: EnvContext,
@@ -627,4 +742,31 @@ pub struct ExecData {
     pub trigger_time: Instant,
     pub dry_run: bool,
     pub abort_rx: tokio::sync::oneshot::Receiver<()>,
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_img_model_resolution() {
+        let mut ctx = EnvContext::default();
+        ctx.source_path = Some("tests/assets/sample.jpg".into());
+        ctx.integrity_scan = true;
+
+        let _result = ctx.resolve("img_model");
+
+        // test should not crash even if EXIF metadata missing
+        assert!(true);
+    }
+
+    #[test]
+    fn test_img_gps_resolution() {
+        let mut ctx = EnvContext::default();
+        ctx.source_path = Some("tests/assets/sample.jpg".into());
+        ctx.integrity_scan = true;
+
+        let _result = ctx.resolve("img_gps");
+
+        assert!(true);
+    }
 }

@@ -8,7 +8,6 @@ pub struct HardwareBridge {
     screen_height: i32,
 }
 
-
 impl HardwareBridge {
     pub fn new(width: i32, height: i32) -> Self {
         let enigo = Enigo::new(&Settings::default())
@@ -227,7 +226,7 @@ mod tests {
         assert!(bridge.validate_coordinate(100, 2000).is_err());
     }
 
-    #[tokio::test] 
+    #[tokio::test]
 
     async fn execute_rejects_invalid_coordinates_before_input_execution() {
         let mut bridge = HardwareBridge::new(1920, 1080);
@@ -258,7 +257,6 @@ mod tests {
     }
     // ---------------- NEW IPC STATE TRANSITION TESTS ----------------
 
-
     #[tokio::test]
 
     async fn valid_ipc_click_flow_executes_successfully() {
@@ -270,7 +268,6 @@ mod tests {
             delay_ms: 0,
         };
 
- 
         assert!(bridge.execute(&action).await.is_ok());
     }
 
@@ -287,9 +284,8 @@ mod tests {
         assert!(bridge.execute(&action).await.is_ok());
     }
 
-
     #[tokio::test]
-   
+
     async fn mixed_ipc_actions_work_correctly() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -316,7 +312,6 @@ mod tests {
         }
     }
     #[tokio::test]
-
 
     async fn execute_fails_when_coordinates_are_invalid() {
         let mut bridge = HardwareBridge::new(1920, 1080);

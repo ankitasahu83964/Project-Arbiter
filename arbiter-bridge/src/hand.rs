@@ -203,6 +203,7 @@ mod tests {
     }
 
     #[tokio::test]
+    
     async fn coordinate_guard_accepts_boundary_values() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -211,6 +212,7 @@ mod tests {
     }
 
     #[tokio::test]
+    
     async fn coordinate_guard_rejects_negative_values() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -219,6 +221,7 @@ mod tests {
     }
 
     #[tokio::test]
+    
     async fn coordinate_guard_rejects_values_beyond_screen() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -272,6 +275,7 @@ mod tests {
     }
 
     #[tokio::test]
+    
     async fn valid_ipc_navigation_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -324,11 +328,8 @@ mod tests {
         };
 
         let result = bridge.execute(&action).await;
-
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-
         assert!(err.contains("outside monitor bounds"));
     }
     

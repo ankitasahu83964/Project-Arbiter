@@ -8,6 +8,7 @@ pub struct HardwareBridge {
     screen_height: i32,
 }
 
+
 impl HardwareBridge {
     pub fn new(width: i32, height: i32) -> Self {
         let enigo = Enigo::new(&Settings::default())

@@ -189,7 +189,6 @@ mod tests {
     }
 
     #[tokio::test]
-    
     async fn wait_action_does_not_need_coordinates() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -203,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    
+
     async fn coordinate_guard_accepts_boundary_values() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -212,7 +211,7 @@ mod tests {
     }
 
     #[tokio::test]
-    
+
     async fn coordinate_guard_rejects_negative_values() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -221,7 +220,7 @@ mod tests {
     }
 
     #[tokio::test]
-    
+
     async fn coordinate_guard_rejects_values_beyond_screen() {
         let bridge = HardwareBridge::new(1920, 1080);
 
@@ -230,7 +229,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn execute_rejects_invalid_coordinates_before_input_execution() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -246,7 +244,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn empty_type_action_returns_ok() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -261,7 +258,6 @@ mod tests {
     // ---------------- NEW IPC STATE TRANSITION TESTS ----------------
 
     #[tokio::test]
-
     async fn valid_ipc_click_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -275,7 +271,7 @@ mod tests {
     }
 
     #[tokio::test]
-    
+
     async fn valid_ipc_navigation_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -289,7 +285,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn mixed_ipc_actions_work_correctly() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -315,9 +310,8 @@ mod tests {
             assert!(bridge.execute(&action).await.is_ok());
         }
     }
-    
-    #[tokio::test]
 
+    #[tokio::test]
     async fn execute_fails_when_coordinates_are_invalid() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -332,9 +326,8 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.contains("outside monitor bounds"));
     }
-    
-    #[tokio::test]
 
+    #[tokio::test]
     async fn invalid_navigation_key_does_not_crash() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -350,7 +343,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn type_action_with_special_characters_executes() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 

@@ -227,9 +227,8 @@ mod tests {
         assert!(bridge.validate_coordinate(100, 2000).is_err());
     }
 
-       
+    #[tokio::test] 
 
- main
     async fn execute_rejects_invalid_coordinates_before_input_execution() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -245,8 +244,6 @@ mod tests {
     }
 
     #[tokio::test]
- 
-
 
     async fn empty_type_action_returns_ok() {
         let mut bridge = HardwareBridge::new(1920, 1080);
@@ -261,9 +258,9 @@ mod tests {
     }
     // ---------------- NEW IPC STATE TRANSITION TESTS ----------------
 
+
     #[tokio::test]
 
-main
     async fn valid_ipc_click_flow_executes_successfully() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -287,29 +284,12 @@ main
             delay_ms: 0,
         };
 
-
-main
         assert!(bridge.execute(&action).await.is_ok());
     }
 
-    #[tokio::test]
- 
-    #[ignore]
-    async fn valid_ipc_navigation_flow_executes_successfully() {
-        let mut bridge = HardwareBridge::new(1920, 1080);
-
-        let action = Action {
-            action_type: ActionType::Navigate("ctrl+c".to_string()),
-            point: Some(Point { x: 50, y: 50 }),
-            delay_ms: 0,
-        };
-
-        assert!(bridge.execute(&action).await.is_ok());
-    }
 
     #[tokio::test]
    
- main
     async fn mixed_ipc_actions_work_correctly() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -338,7 +318,6 @@ main
     #[tokio::test]
 
 
- main
     async fn execute_fails_when_coordinates_are_invalid() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -358,7 +337,6 @@ main
     }
     #[tokio::test]
 
-main
     async fn invalid_navigation_key_does_not_crash() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -375,8 +353,6 @@ main
 
     #[tokio::test]
 
-
- main
     async fn type_action_with_special_characters_executes() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 

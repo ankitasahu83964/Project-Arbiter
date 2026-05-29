@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    
     async fn wait_action_does_not_need_coordinates() {
         let mut bridge = HardwareBridge::new(1920, 1080);
 
@@ -311,6 +311,7 @@ mod tests {
             assert!(bridge.execute(&action).await.is_ok());
         }
     }
+    
     #[tokio::test]
 
     async fn execute_fails_when_coordinates_are_invalid() {
@@ -330,6 +331,7 @@ mod tests {
 
         assert!(err.contains("outside monitor bounds"));
     }
+    
     #[tokio::test]
 
     async fn invalid_navigation_key_does_not_crash() {

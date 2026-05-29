@@ -27,7 +27,7 @@ fn is_debounced(signature: &str) -> bool {
     let now = Instant::now();
 
     if let Some(last_fire) = map.get(signature) {
-        if now.duration_since(*last_fire).as_millis() < DEBOUNCE_MS as u128 {
+        if now.duration_since(*last_fire).as_millis() < u128::from(DEBOUNCE_MS) {
             debug!(signature, "Vigil: dropping debounced event");
             return true;
         }
@@ -84,7 +84,10 @@ pub fn is_write_complete(path: &str) -> bool {
 
 #[cfg(feature = "vigil-fs")]
 pub mod fs {
-    use super::*;
+    use super::{
+        info, is_debounced, is_temp_file, mpsc, warn, DateTime, Summons, TimeZone, Utc, WardConfig,
+        WardLayer,
+    };
     use globset::GlobMatcher;
     use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
     use tokio::sync::broadcast;
@@ -99,11 +102,13 @@ pub mod fs {
         let pattern = ward.pattern.clone();
         let analytical = ward.layer == WardLayer::Analytical;
         let recursive = ward.recursive;
-        let ward_id = ward.id.clone();
+        let ward_id = ward.id;
 
         info!(%pattern, path = %watch_path.display(), analytical, recursive, "Vigil-fs: spawning watcher");
 
-        let matcher: Option<GlobMatcher> = if !pattern.is_empty() {
+        let matcher: Option<GlobMatcher> = if pattern.is_empty() {
+            None
+        } else {
             match globset::GlobBuilder::new(&pattern)
                 .case_insensitive(true)
                 .build()
@@ -114,8 +119,6 @@ pub mod fs {
                     None
                 }
             }
-        } else {
-            None
         };
 
         std::thread::spawn(move || {
@@ -157,7 +160,7 @@ pub mod fs {
                     }
 
                     match watcher.watch(&watch_path, mode) {
-                        Ok(_) => {
+                        Ok(()) => {
                             watching = true;
                             missing_logged = false;
                             info!(path = %watch_path.display(), ?mode, "Vigil-fs: watcher attached");
@@ -297,7 +300,7 @@ pub mod fs {
                             };
 
                             let debounce_sig =
-                                format!("{}|{}", summons.to_registry_key(), filename);
+                                format!("{key}|{filename}", key = summons.to_registry_key());
                             let path_str_check = path_str.clone();
 
                             let tx_clone = tx.clone();
@@ -333,7 +336,7 @@ pub mod fs {
         } else if bytes >= KB {
             format!("{:.2} KB", bytes as f64 / KB as f64)
         } else {
-            format!("{} B", bytes)
+            format!("{bytes} B")
         }
     }
 
@@ -355,11 +358,11 @@ pub mod fs {
                 &path_w,
                 SE_FILE_OBJECT,
                 OWNER_SECURITY_INFORMATION,
-                Some(&mut owner_sid),
+                Some(&raw mut owner_sid),
                 None,
                 None,
                 None,
-                &mut sd,
+                &raw mut sd,
             )
             .is_err()
             {
@@ -377,17 +380,17 @@ pub mod fs {
                 None,
                 owner_sid,
                 PWSTR(name_buf.as_mut_ptr()),
-                &mut name_len,
+                &raw mut name_len,
                 PWSTR(domain_buf.as_mut_ptr()),
-                &mut domain_len,
-                &mut sid_type,
+                &raw mut domain_len,
+                &raw mut sid_type,
             );
 
             // Step 3: release the security descriptor regardless of lookup outcome.
             // SECURITY_DESCRIPTORs from GetNamedSecurityInfoW must be freed with LocalFree.
             if !sd.0.is_null() {
                 use windows::Win32::Foundation::LocalFree;
-                let _ = LocalFree(windows::Win32::Foundation::HLOCAL(sd.0 as _));
+                let _ = LocalFree(windows::Win32::Foundation::HLOCAL(sd.0.cast()));
             }
 
             if looked_up.is_err() {
@@ -401,7 +404,7 @@ pub mod fs {
             Some(if domain.is_empty() {
                 name
             } else {
-                format!("{}\\{}", domain, name)
+                format!("{domain}\\{name}")
             })
         }
     }
@@ -409,10 +412,12 @@ pub mod fs {
 
 #[cfg(feature = "vigil-keys")]
 pub mod keys {
-    use super::*;
+    use super::{info, warn, Summons};
 
     pub enum HotkeyCommand {
         Register(String, tokio::sync::mpsc::Sender<Summons>),
+        Unregister(String),
+        UnregisterAll,
     }
 
     lazy_static::lazy_static! {
@@ -446,6 +451,23 @@ pub mod keys {
                                     warn!(%combo, "Vigil-keys: invalid hotkey string");
                                 }
                             }
+                            HotkeyCommand::Unregister(combo) => {
+                                if let Ok(hotkey) = combo.parse::<HotKey>() {
+                                    let _ = manager.unregister(hotkey);
+                                    senders.remove(&hotkey.id());
+                                    info!(%combo, "Vigil-keys: hotkey unregistered");
+                                }
+                            }
+                            HotkeyCommand::UnregisterAll => {
+                                for (id, (combo, _)) in senders.drain() {
+                                    if let Ok(hotkey) = combo.parse::<HotKey>() {
+                                        if manager.unregister(hotkey).is_err() {
+                                            warn!(id, %combo, "Vigil-keys: failed to unregister hotkey");
+                                        }
+                                    }
+                                }
+                                info!("Vigil-keys: all hotkeys cleared");
+                            }
                         }
                     }
 
@@ -454,7 +476,7 @@ pub mod keys {
                             if let Some((combo, sum_tx)) = senders.get(&event.id) {
                                 let mut context = super::EnvContext::new();
                                 context.insert("hotkey_combo", combo);
-                                context.insert("timestamp", &format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
+                                context.insert("timestamp", &format!("{secs}", secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
                                 context.insert("timestamp_local", &chrono::Local::now().format("%m/%d/%Y %I:%M %p").to_string());
                                 let summons = super::Summons::Hotkey {
                                     combo: combo.clone(),
@@ -482,17 +504,35 @@ pub mod keys {
             .send(HotkeyCommand::Register(combo, tx))
             .map_err(|e| e.to_string())
     }
+
+    pub fn unregister_hotkey(combo: String) -> Result<(), String> {
+        HOTKEY_TX
+            .send(HotkeyCommand::Unregister(combo))
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn unregister_all_hotkeys() -> Result<(), String> {
+        HOTKEY_TX
+            .send(HotkeyCommand::UnregisterAll)
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(feature = "vigil-clipboard")]
 pub mod clipboard {
-    use super::*;
+    use super::{is_debounced, mpsc, EnvContext, Summons};
     use tokio::sync::broadcast;
     use windows::core::w;
-    use windows::Win32::Foundation::*;
-    use windows::Win32::System::DataExchange::*;
+    use windows::Win32::Foundation::{HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::DataExchange::{
+        AddClipboardFormatListener, CloseClipboard, GetClipboardData, OpenClipboard,
+        RemoveClipboardFormatListener,
+    };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::WindowsAndMessaging::*;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW, HMENU,
+        HWND_MESSAGE, MSG, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLIPBOARDUPDATE,
+    };
 
     pub fn spawn_watcher(tx: mpsc::Sender<Summons>) -> broadcast::Sender<()> {
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
@@ -519,7 +559,7 @@ pub mod clipboard {
                 };
 
                 // Ignore error if already registered
-                let _ = windows::Win32::UI::WindowsAndMessaging::RegisterClassW(&wc);
+                let _ = windows::Win32::UI::WindowsAndMessaging::RegisterClassW(&raw const wc);
 
                 let hwnd_res = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -558,7 +598,7 @@ pub mod clipboard {
                         break;
                     }
 
-                    while PeekMessageW(&mut msg, hwnd, 0, 0, PM_REMOVE).as_bool() {
+                    while PeekMessageW(&raw mut msg, hwnd, 0, 0, PM_REMOVE).as_bool() {
                         if msg.message == WM_CLIPBOARDUPDATE {
                             let mut context = EnvContext::new();
                             if let Some(content) = get_clipboard_text() {
@@ -567,8 +607,8 @@ pub mod clipboard {
                             context.insert(
                                 "timestamp",
                                 &format!(
-                                    "{}",
-                                    std::time::SystemTime::now()
+                                    "{secs}",
+                                    secs = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
                                         .as_secs()
@@ -584,7 +624,7 @@ pub mod clipboard {
                                 let _ = tx.blocking_send(summons);
                             }
                         }
-                        let _ = DispatchMessageW(&msg);
+                        let _ = DispatchMessageW(&raw const msg);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
@@ -605,7 +645,9 @@ pub mod clipboard {
             let result = if let Ok(h) = handle_res {
                 let h_global = HGLOBAL(h.0);
                 let ptr = windows::Win32::System::Memory::GlobalLock(h_global);
-                if !ptr.is_null() {
+                if ptr.is_null() {
+                    None
+                } else {
                     let size = windows::Win32::System::Memory::GlobalSize(h_global);
                     let p_u16 = ptr as *const u16;
                     let max_len = size / 2; // size in bytes, each u16 is 2 bytes
@@ -618,8 +660,6 @@ pub mod clipboard {
                     let text = String::from_utf16_lossy(std::slice::from_raw_parts(p_u16, len));
                     let _ = windows::Win32::System::Memory::GlobalUnlock(h_global);
                     Some(text)
-                } else {
-                    None
                 }
             } else {
                 None

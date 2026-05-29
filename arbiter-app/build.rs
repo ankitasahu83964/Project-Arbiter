@@ -12,8 +12,15 @@ fn main() {
         res.set("ProductName", "Project Arbiter");
         res.set("OriginalFilename", "arbiter.exe");
         res.set("LegalCopyright", "Copyright (c) 2026");
-        res.set("ProductVersion", "0.2.0.0");
-        res.set("FileVersion", "0.2.0.0");
+        let pkg_ver =
+            std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION must be set by Cargo");
+        let parts: Vec<&str> = pkg_ver.split('.').collect();
+        let major = parts.first().unwrap_or(&"2");
+        let minor = parts.get(1).unwrap_or(&"1");
+        let win_ver = format!("0.{major}.{minor}.0");
+
+        res.set("ProductVersion", &win_ver);
+        res.set("FileVersion", &win_ver);
         res.set_manifest(
             r#"
         <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">

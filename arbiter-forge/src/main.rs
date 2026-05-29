@@ -2,6 +2,8 @@
 
 slint::include_modules!();
 
+mod ipc;
+
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::rc::Rc;
 use std::time::Duration;
@@ -11,9 +13,8 @@ use arbiter_core::decree::{
     Action, ActionType, DecreeId, DecreeNode, NodeId, NodeKind, PresenceConfig,
 };
 use arbiter_core::ledger::SummonsDef;
-use arbiter_core::protocol::{
-    ForgeCommand, LogEntry as WireLogEntry, PIPE_COMMAND, PIPE_TELEMETRY,
-};
+use arbiter_core::normalize_windows_path;
+use arbiter_core::protocol::ForgeCommand;
 
 thread_local! {
     static LOG_MODEL:    Rc<VecModel<LogEntry>>    = Rc::new(VecModel::default());
@@ -36,7 +37,7 @@ fn generate_decree_id(label: &str) -> String {
         .collect();
 
     if slug.is_empty() {
-        format!("id-{}", CTR.fetch_add(1, Ordering::Relaxed))
+        format!("id-{id}", id = CTR.fetch_add(1, Ordering::Relaxed))
     } else {
         slug
     }
@@ -51,75 +52,7 @@ fn generate_step_id() -> String {
         .unwrap_or_default()
         .as_secs();
     let n = STEP_CTR.fetch_add(1, Ordering::Relaxed);
-    format!("step-{}-{}", epoch, n)
-}
-
-async fn send_command(cmd: &ForgeCommand) {
-    use tokio::net::windows::named_pipe::ClientOptions;
-
-    let result = async {
-        use futures::SinkExt;
-        use tokio_util::codec::FramedWrite;
-        use tokio_util::codec::LengthDelimitedCodec;
-
-        let client = ClientOptions::new().open(PIPE_COMMAND)?;
-        let mut framed = FramedWrite::new(client, LengthDelimitedCodec::new());
-        let bin = rmp_serde::to_vec_named(cmd).map_err(std::io::Error::other)?;
-        framed.send(bytes::Bytes::from(bin)).await?;
-        Ok::<(), std::io::Error>(())
-    }
-    .await;
-
-    if let Err(e) = result {
-        tracing::error!(%e, "Forge: IPC send failed");
-        LOG_MODEL.with(|m| {
-            m.push(LogEntry {
-                time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
-                tag: "IPC".into(),
-                tag_color: Color::from_rgb_u8(244, 63, 94),
-                msg: format!("IPC Failure: {}", e).into(),
-                decree_id: "".into(),
-            });
-        });
-    } else {
-        tracing::info!("Forge: Command sent successfully");
-        LOG_MODEL.with(|m| {
-            m.push(LogEntry {
-                time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
-                tag: "FORGE".into(),
-                tag_color: Color::from_rgb_u8(34, 197, 94),
-                msg: "Command committed to engine successfully.".into(),
-                decree_id: "".into(),
-            });
-        });
-    }
-}
-
-fn normalize_windows_path(path: &str) -> String {
-    fn is_drive_root(p: &str) -> bool {
-        let b = p.as_bytes();
-        b.len() == 3 && b[1] == b':' && b[2] == b'\\'
-    }
-
-    let mut out = path.trim().replace('/', "\\");
-    while out.ends_with('\\') && !is_drive_root(&out) {
-        out.pop();
-    }
-    out
-}
-
-async fn app_is_available(wait_for: Duration) -> bool {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    let deadline = std::time::Instant::now() + wait_for;
-    loop {
-        if ClientOptions::new().open(PIPE_COMMAND).is_ok() {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    format!("step-{epoch}-{n}")
 }
 
 fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef {
@@ -178,7 +111,7 @@ fn collect_decree_from_ui(ui: &ArbiterForge) -> arbiter_core::ledger::DecreeDef 
                         args: step
                             .arg_b
                             .split_whitespace()
-                            .map(|s| s.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect(),
                         detached: true,
                     },
@@ -257,7 +190,7 @@ fn next_new_decree_label() -> String {
             }
         }
     });
-    format!("New Decree {}", max_n + 1)
+    format!("New Decree {n}", n = max_n + 1)
 }
 
 fn sync_ledger_to_ui() {
@@ -370,7 +303,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     info!("Arbiter Forge: Launching Slint Interface");
 
-    if !app_is_available(Duration::from_secs(4)).await {
+    if !ipc::app_is_available(Duration::from_secs(4)).await {
         let _ = rfd::MessageDialog::new()
             .set_title("Arbiter Forge")
             .set_description("Arbiter App is not running. Start the app first.")
@@ -382,19 +315,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = ArbiterForge::new()?;
     let ui_handle = ui.as_weak();
 
-    let log_model = LOG_MODEL.with(|m| m.clone());
-    let decree_model = DECREE_MODEL.with(|m| m.clone());
-    let step_model = STEP_MODEL.with(|m| m.clone());
-    let ward_model = WARD_MODEL.with(|m| m.clone());
-    let ts_path_model = TS_PATH_MODEL.with(|m| m.clone());
-    let baton_model = BATON_MODEL.with(|m| m.clone());
+    let log_model = LOG_MODEL.with(std::clone::Clone::clone);
+    let decree_model = DECREE_MODEL.with(std::clone::Clone::clone);
+    let step_model = STEP_MODEL.with(std::clone::Clone::clone);
+    let ward_model = WARD_MODEL.with(std::clone::Clone::clone);
+    let ts_path_model = TS_PATH_MODEL.with(std::clone::Clone::clone);
+    let baton_model = BATON_MODEL.with(std::clone::Clone::clone);
 
     ui.set_telemetry_logs(ModelRc::from(log_model.clone()));
     ui.set_decree_list(ModelRc::from(decree_model.clone()));
     ui.set_decree_steps(ModelRc::from(step_model.clone()));
-    ui.set_ward_list(ModelRc::from(ward_model.clone()));
-    ui.set_trusted_paths(ModelRc::from(ts_path_model.clone()));
-    ui.set_baton_allowed(ModelRc::from(baton_model.clone()));
+    ui.set_ward_list(ModelRc::from(ward_model));
+    ui.set_trusted_paths(ModelRc::from(ts_path_model));
+    ui.set_baton_allowed(ModelRc::from(baton_model));
 
     sync_ledger_to_ui();
     sync_signet_to_ui(&ui);
@@ -418,127 +351,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let ui_handle_telemetry = ui_handle.clone();
-    tokio::spawn(async move {
-        use futures::StreamExt;
-        use tokio::net::windows::named_pipe::ClientOptions;
-        use tokio::time::timeout;
-        use tokio_util::codec::FramedRead;
-
-        let watchdog_duration = Duration::from_secs(2);
-
-        loop {
-            let client = match ClientOptions::new().open(PIPE_TELEMETRY) {
-                Ok(c) => c,
-                Err(_) => {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
-
-            let mut framed =
-                FramedRead::new(client, tokio_util::codec::LengthDelimitedCodec::new());
-
-            loop {
-                match timeout(watchdog_duration, framed.next()).await {
-                    Ok(Some(Ok(bytes))) => match rmp_serde::from_slice::<WireLogEntry>(&bytes) {
-                        Ok(core_entry) => {
-                            if core_entry.tag == "VIGIL" && core_entry.message.contains("Heartbeat")
-                            {
-                                continue;
-                            }
-
-                            let ui_copy = ui_handle_telemetry.clone();
-
-                            let tag_color = match core_entry.tag.as_str() {
-                                "VIGIL" | "Vigil-fs" | "Vigil-keys" => {
-                                    Color::from_rgb_u8(99, 102, 241)
-                                }
-                                "ATLAS" | "Atlas" => Color::from_rgb_u8(245, 158, 11),
-                                "RUNNER" | "Runner" => Color::from_rgb_u8(16, 185, 129),
-                                "BATON" | "Baton" => Color::from_rgb_u8(244, 63, 94),
-                                "ERROR" => Color::from_rgb_u8(244, 63, 94),
-                                "WARN" => Color::from_rgb_u8(245, 158, 11),
-                                _ => Color::from_rgb_u8(161, 161, 170),
-                            };
-
-                            let time_str = if core_entry.time.is_empty() {
-                                chrono::Local::now().format("%H:%M:%S").to_string()
-                            } else if let Ok(dt) =
-                                chrono::DateTime::parse_from_rfc3339(&core_entry.time)
-                            {
-                                dt.with_timezone(&chrono::Local)
-                                    .format("%H:%M:%S")
-                                    .to_string()
-                            } else {
-                                core_entry.time.clone()
-                            };
-
-                            let is_runner =
-                                core_entry.tag == "RUNNER" || core_entry.tag == "Runner";
-                            let is_done = is_runner
-                                && (core_entry.message.contains("complete")
-                                    || core_entry.message.contains("finished")
-                                    || core_entry.message.contains("error")
-                                    || core_entry.message.contains("aborted"));
-
-                            let should_sync = core_entry.tag == "ATLAS"
-                                && (core_entry.message.contains("registered and saved")
-                                    || core_entry.message.contains("removed and saved"));
-                            let should_sync_signet = core_entry.tag == "VIGIL"
-                                && core_entry.message.contains("Conservatory Wards updated");
-
-                            let entry = LogEntry {
-                                time: time_str.into(),
-                                tag: core_entry.tag.into(),
-                                msg: core_entry.message.into(),
-                                tag_color,
-                                decree_id: core_entry.decree_id.unwrap_or_default().into(),
-                            };
-
-                            let _ = ui_copy.upgrade_in_event_loop(move |ui| {
-                                LOG_MODEL.with(|m| {
-                                    m.push(entry);
-                                    if m.row_count() > 50 {
-                                        m.remove(0);
-                                    }
-                                });
-                                if should_sync {
-                                    sync_ledger_to_ui();
-                                }
-                                if should_sync_signet {
-                                    sync_signet_to_ui(&ui);
-                                }
-                                if is_runner {
-                                    ui.set_engine_running(!is_done);
-                                }
-                                ui.invoke_scroll_logs_to_bottom();
-                            });
-                        }
-                        Err(e) => {
-                            tracing::error!("Forge: failed to parse telemetry MessagePack: {}", e);
-                        }
-                    },
-                    Ok(Some(Err(e))) => {
-                        tracing::error!("Forge: telemetry pipe error: {}", e);
-                        break;
-                    }
-                    Ok(None) => {
-                        tracing::warn!("Forge: telemetry pipe closed by engine.");
-                        break;
-                    }
-                    Err(_) => {
-                        tracing::error!("Forge: Watchdog expired (2s silence). Engine likely terminated. Requesting graceful exit.");
-                        let _ = ui_handle_telemetry.upgrade_in_event_loop(|ui| {
-                            ui.invoke_request_close();
-                        });
-                        return;
-                    }
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    });
+    ipc::spawn_telemetry_listener(ui_handle.clone());
 
     ui.on_request_close(move || {
         info!("Forge: Received close request. Terminating event loop.");
@@ -585,8 +398,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                if let Some(existing) = ledger.decrees.iter_mut().find(|d| d.id == def.id) {
-                    *existing = def.clone();
+                if let Some(existing) = ledger.decrees.iter_mut().find(|o| o.id == def.id) {
+                    existing.clone_from(&def);
                 } else {
                     ledger.decrees.push(def.clone());
                 }
@@ -600,7 +413,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let cmd = ForgeCommand::SaveDecree(def);
                 tokio::spawn(async move {
-                    send_command(&cmd).await;
+                    ipc::send_command(&cmd).await;
                 });
             }
         }
@@ -617,7 +430,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             time: chrono::Local::now().format("%H:%M:%S").to_string().into(),
                             tag: "VALIDATE".into(),
                             tag_color: Color::from_rgb_u8(244, 63, 94),
-                            msg: format!("Validation Error: {}", e).into(),
+                            msg: format!("Validation Error: {e}").into(),
                             decree_id: "".into(),
                         });
                     });
@@ -627,9 +440,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let key = match &def.summons {
                     SummonsDef::FileCreated {
                         ward_id, pattern, ..
-                    } => format!("FileCreated|{}|{}", ward_id, pattern),
-                    SummonsDef::Hotkey { combo } => format!("Hotkey|{}", combo),
-                    SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{}", name),
+                    } => format!("FileCreated|{ward_id}|{pattern}"),
+                    SummonsDef::Hotkey { combo } => format!("Hotkey|{combo}"),
+                    SummonsDef::ProcessAppeared { name } => format!("ProcessAppeared|{name}"),
                     SummonsDef::Clipboard => "Clipboard".to_string(),
                     SummonsDef::Manual => "Manual".to_string(),
                 };
@@ -639,15 +452,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     dry_run: true,
                 };
                 tokio::spawn(async move {
-                    send_command(&save_cmd).await;
-                    send_command(&run_cmd).await;
+                    ipc::send_command(&save_cmd).await;
+                    ipc::send_command(&run_cmd).await;
                 });
             }
         }
     });
 
     ui.on_new_decree({
-        let decree_model = decree_model.clone();
+        let decree_model = decree_model;
         let step_model = step_model.clone();
         let ui_handle = ui_handle.clone();
         move || {
@@ -771,19 +584,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         ActionType::Type(s) => (
                                             2,
                                             s.clone(),
-                                            "".to_string(),
+                                            String::new(),
                                             "Synthetic: emit keys".to_string(),
                                         ),
                                         ActionType::Wait(ms) => (
                                             3,
                                             ms.to_string(),
-                                            "".to_string(),
+                                            String::new(),
                                             "Steady Wait".to_string(),
                                         ),
                                         ActionType::Navigate(s) => {
-                                            (4, s.clone(), "".to_string(), "Navigate".to_string())
+                                            (4, s.clone(), String::new(), "Navigate".to_string())
                                         }
-                                        _ => (5, "".to_string(), "".to_string(), "".to_string()),
+                                        _ => (5, String::new(), String::new(), String::new()),
                                     };
 
                                     incoming_steps.push(DecreeStep {
@@ -836,9 +649,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 row.subtext = "Inscribe: Move Mode".into();
                             }
                         } else {
-                            row.title = title.clone();
-                            row.arg_a = a.clone();
-                            row.arg_b = b.clone();
+                            row.title = title;
+                            row.arg_a = a;
+                            row.arg_b = b;
                         }
                         step_model.set_row_data(i, row);
                         break;
@@ -916,7 +729,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let cmd = ForgeCommand::RemoveDecree { decree_id: id_str };
             tokio::spawn(async move {
-                send_command(&cmd).await;
+                ipc::send_command(&cmd).await;
             });
 
             if let Some(ui) = ui_handle.upgrade() {
@@ -935,7 +748,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_remove_step({
-        let step_model = step_model.clone();
+        let step_model = step_model;
         move |step_id| {
             info!(step_id = %step_id, "Forge: remove-step");
             for i in 0..step_model.row_count() {
@@ -954,7 +767,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             use std::io::Write;
             use std::process::{Command, Stdio};
-            info!("Copying to clipboard: {}", text);
+            info!("Copying to clipboard: {text}");
             if let Ok(mut child) = Command::new("clip").stdin(Stdio::piped()).spawn() {
                 if let Some(mut stdin) = child.stdin.take() {
                     let _ = stdin.write_all(text.as_bytes());
@@ -986,11 +799,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             label: new_label.to_string(),
         };
         tokio::spawn(async move {
-            send_command(&cmd).await;
+            ipc::send_command(&cmd).await;
         });
     });
 
-    let ward_model_cb = WARD_MODEL.with(|m| m.clone());
+    let ward_model_cb = WARD_MODEL.with(std::clone::Clone::clone);
     ui.on_add_ward({
         let ward_model_cb = ward_model_cb.clone();
         move || {
@@ -1079,7 +892,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let ts_path_model_cb = TS_PATH_MODEL.with(|m| m.clone());
+    let ts_path_model_cb = TS_PATH_MODEL.with(std::clone::Clone::clone);
     ui.on_add_trusted_path({
         let ts_path_model_cb = ts_path_model_cb.clone();
         move || {
@@ -1105,7 +918,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let baton_model_cb = BATON_MODEL.with(|m| m.clone());
+    let baton_model_cb = BATON_MODEL.with(std::clone::Clone::clone);
     ui.on_add_baton({
         let baton_model_cb = baton_model_cb.clone();
         move || {
@@ -1152,7 +965,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.on_save_wards({
-        let ward_model_cb = ward_model_cb.clone();
+        let ward_model_cb = ward_model_cb;
         move || {
             let mut wards = Vec::new();
             let mut seen_paths = std::collections::HashSet::new();
@@ -1190,16 +1003,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let cmd = ForgeCommand::SaveWards(wards);
             tokio::spawn(async move {
-                send_command(&cmd).await;
+                ipc::send_command(&cmd).await;
             });
             info!("Forge: Sent SaveWards command");
         }
     });
 
     ui.on_save_signet({
-        let ts_path_model_cb = ts_path_model_cb.clone();
-        let baton_model_cb = baton_model_cb.clone();
-        let ui_handle = ui_handle.clone();
+        let ts_path_model_cb = ts_path_model_cb;
+        let baton_model_cb = baton_model_cb;
+        let ui_handle = ui_handle;
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 let mut trusted_paths = std::collections::HashSet::new();
@@ -1235,7 +1048,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let cmd = ForgeCommand::SaveSignet(cfg);
                 tokio::spawn(async move {
-                    send_command(&cmd).await;
+                    ipc::send_command(&cmd).await;
                 });
                 info!("Forge: Sent SaveSignet command");
             }

@@ -30,7 +30,7 @@ impl ArbiterRollingWriter {
 impl std::io::Write for ArbiterRollingWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let now = chrono::Local::now();
-        let filename = format!("arbiter.{}.log", now.format("%Y-%m-%d"));
+        let filename = format!("arbiter.{log_time}.log", log_time = now.format("%Y-%m-%d"));
         let path = self.base_dir.join(filename);
 
         if let Some(parent) = path.parent() {
@@ -76,15 +76,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     println!(
-        r#"
+        r"
     █▀▀█ █▀▀█ █▀▀█ ▀█▀ ▀▀█▀▀ █▀▀ █▀▀█
     █▄▄█ █▄▄▀ █▀▀▄  █    █   █▀▀ █▄▄▀
     ▀  ▀ ▀ ▀▀ ▀▀▀▀ ▀▀▀   ▀   ▀▀▀ ▀ ▀▀
     Deterministic System Orchestration
     
-    "#
+    "
     );
-    info!("Arbiter Engine: booting version 2.0.0");
+    info!(
+        "Arbiter Engine: booting version {version}",
+        version = env!("CARGO_PKG_VERSION")
+    );
 
     let filter = ArbiterFilter::new();
 
@@ -140,7 +143,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cmd_tx = forge_cmd_tx.clone();
     tokio::spawn(async move {
         use tokio::net::windows::named_pipe::ServerOptions;
-        // use tokio_util::codec::LengthDelimitedCodec; // removed unused
         loop {
             let server = ServerOptions::new()
                 .first_pipe_instance(true)
@@ -208,10 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             (1920, 1080)
         }
     };
-    info!(
-        "Runner: mapping display boundaries to {}x{}",
-        screen_width, screen_height
-    );
+    info!("Runner: mapping display boundaries to {screen_width}x{screen_height}",);
     arbiter_bridge::runner::spawn(exec_cmd_rx, screen_width, screen_height, filter.clone());
 
     // Signet config is loaded fresh on every execution via signet::load().
@@ -220,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // automatically whenever the user saves new Signet settings via the Forge).
     // The previous pattern — cloning `trusted_paths` and `baton_allowed` once
     // at boot — meant new whitelists wouldn't take effect until restart.
-    let map_run_event_tx = run_event_tx.clone();
+    let map_run_event_tx = run_event_tx;
     tokio::spawn(async move {
         while let Some(exec_data) = atlas_exec_rx.recv().await {
             let fresh_signet = arbiter_core::signet::load().unwrap_or_default();
@@ -250,7 +249,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     arbiter_core::ledger::apply(&ledger, &mut atlas, &vigil_tx, &filter);
     info!("Atlas: engine core ready");
 
-    let atlas_broadcast = log_broadcast_tx.clone();
+    let atlas_broadcast = log_broadcast_tx;
     let atlas_loop_broadcast = atlas_broadcast.clone();
     let atlas_vigil_tx = vigil_tx.clone();
     let atlas_filter = filter.clone();
@@ -278,9 +277,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown_cell = Arc::new(std::sync::Mutex::new(Some(atlas_shutdown_tx)));
     let reset_cell = Arc::new(std::sync::Mutex::new(reset_tx));
     let paused_cell = Arc::new(std::sync::Mutex::new(false));
-    let pause_cmd_tx = forge_cmd_tx.clone();
+    let pause_cmd_tx = forge_cmd_tx;
 
-    let tray_broadcast = atlas_broadcast.clone();
+    let tray_broadcast = atlas_broadcast;
     tray::run_event_loop(move |event, proxy| {
         match event {
             tray::TrayAppEvent::Shutdown => {
@@ -307,7 +306,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         static ONCE: std::sync::Once = std::sync::Once::new();
-        let proxy_atlas = proxy.clone();
+        let proxy_atlas = proxy;
         let atlas_logs = tray_broadcast.clone();
         ONCE.call_once(move || {
             let mut log_rx = atlas_logs.subscribe();
@@ -332,8 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(id) = entry.decree_id {
                                         let _ = proxy_atlas.send_event(
                                             tray::TrayAppEvent::StatusUpdate(format!(
-                                                "Executing: {}",
-                                                id
+                                                "Executing: {id}"
                                             )),
                                         );
                                     }

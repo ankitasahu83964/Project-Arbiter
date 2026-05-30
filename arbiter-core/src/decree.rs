@@ -1,13 +1,12 @@
-#[cfg(feature = "vigil-deep")]
-//use exif::{In, Reader, Tag, Value};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::Instant};
 use tracing::warn;
-
 #[cfg(feature = "vigil-deep")]
-//use std::fs::File;
-#[cfg(feature = "vigil-deep")]
-//use std::io::BufReader;
+#[derive(Debug, Clone)]
+struct ExifCache {
+    model: Option<String>,
+    gps: Option<String>,
+}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 /// Unique identifier for a decree.
@@ -429,9 +428,7 @@ pub struct EnvContext {
     #[serde(skip)]
     text_lines_cache: OnceLock<Option<String>>,
     #[serde(skip)]
-    img_model_cache: OnceLock<Option<String>>,
-    #[serde(skip)]
-    img_gps_cache: OnceLock<Option<String>>,
+    exif_cache: OnceLock<Option<ExifCache>>,
 }
 
 impl Default for EnvContext {
@@ -445,8 +442,7 @@ impl Default for EnvContext {
             md5_cache: OnceLock::new(),
             entropy_cache: OnceLock::new(),
             text_lines_cache: OnceLock::new(),
-            img_model_cache: OnceLock::new(),
-            img_gps_cache: OnceLock::new(),
+            exif_cache: OnceLock::new(),
         }
     }
 }
@@ -462,8 +458,7 @@ impl Clone for EnvContext {
             md5_cache: OnceLock::new(),
             entropy_cache: OnceLock::new(),
             text_lines_cache: OnceLock::new(),
-            img_model_cache: OnceLock::new(),
-            img_gps_cache: OnceLock::new(),
+            exif_cache: OnceLock::new(),
         }
     }
 }
@@ -512,13 +507,15 @@ impl EnvContext {
                 .get_or_init(|| self.source_path.as_ref().and_then(compute_text_lines))
                 .as_deref(),
             EnvKey::ImgModel => self
-                .img_model_cache
-                .get_or_init(|| self.source_path.as_ref().and_then(compute_image_model))
-                .as_deref(),
+                .exif_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_exif_cache))
+                .as_ref()
+                .and_then(|cache| cache.model.as_deref()),
             EnvKey::ImgGps => self
-                .img_gps_cache
-                .get_or_init(|| self.source_path.as_ref().and_then(compute_image_gps))
-                .as_deref(),
+                .exif_cache
+                .get_or_init(|| self.source_path.as_ref().and_then(compute_exif_cache))
+                .as_ref()
+                .and_then(|cache| cache.gps.as_deref()),
             _ => None,
         }
     }
@@ -655,67 +652,37 @@ fn compute_text_lines(_path: &PathBuf) -> Option<String> {
 }
 
 #[cfg(feature = "vigil-deep")]
-fn compute_image_model(path: &PathBuf) -> Option<String> {
+fn compute_exif_cache(path: &PathBuf) -> Option<ExifCache> {
     let file = std::fs::File::open(path).ok()?;
     let mut bufreader = std::io::BufReader::new(file);
 
-    let exifreader = exif::Reader::new();
-    let exif = exifreader.read_from_container(&mut bufreader).ok()?;
+    let exif = exif::Reader::new()
+        .read_from_container(&mut bufreader)
+        .ok()?;
 
-    let field = exif.get_field(exif::Tag::Model, exif::In::PRIMARY)?;
+    let model = exif
+        .get_field(exif::Tag::Model, exif::In::PRIMARY)
+        .map(|field| field.display_value().with_unit(&exif).to_string());
 
-    Some(field.display_value().with_unit(&exif).to_string())
+    let gps = match (
+        exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY),
+        exif.get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY),
+    ) {
+        (Some(lat), Some(lon)) => Some(format!(
+            "{}, {}",
+            lat.display_value().with_unit(&exif),
+            lon.display_value().with_unit(&exif)
+        )),
+        _ => None,
+    };
+
+    Some(ExifCache { model, gps })
 }
 
 #[cfg(not(feature = "vigil-deep"))]
-fn compute_image_model(_path: &PathBuf) -> Option<String> {
+fn compute_exif_cache(_path: &PathBuf) -> Option<ExifCache> {
     None
 }
-
-#[cfg(feature = "vigil-deep")]
-fn compute_image_gps(path: &PathBuf) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut bufreader = std::io::BufReader::new(file);
-
-    let exifreader = exif::Reader::new();
-    let exif = exifreader.read_from_container(&mut bufreader).ok()?;
-
-    let lat = exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY)?;
-    let lon = exif.get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY)?;
-
-    Some(format!(
-        "{}, {}",
-        lat.display_value().with_unit(&exif),
-        lon.display_value().with_unit(&exif)
-    ))
-}
-
-#[cfg(not(feature = "vigil-deep"))]
-fn compute_image_gps(_path: &PathBuf) -> Option<String> {
-    None
-}
-
-//#[cfg(feature = "vigil-deep")]
-//fn compute_exif_model(path: &PathBuf) -> Option<String> {
-// let file = File::open(path).ok()?;
-//let mut bufreader = BufReader::new(file);
-
-//let exif = Reader::new().read_from_container(&mut bufreader).ok()?;
-
-//let field = exif.get_field(Tag::Model, In::PRIMARY)?;
-
-//match &field.value {
-// Value::Ascii(vec) if !vec.is_empty() => {
-// Some(String::from_utf8_lossy(&vec[0]).trim().to_string())
-//}
-// _ => None,
-//}
-//}
-
-//#[cfg(not(feature = "vigil-deep"))]
-//fn compute_exif_model(_path: &PathBuf) -> Option<String> {
-// None
-//}
 
 #[derive(Debug, Clone)]
 /// Represents execution events emitted by the runtime.
